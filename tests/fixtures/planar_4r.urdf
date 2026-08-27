@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<!-- Rovinne rameno 4R: ctyri rovnobezne klouby kolem z, ramena 4 x 0.3.
+
+     TOHLE je fixture, ktera je vuci pathEfficiency skutecne redundantni,
+     a duvod stoji za precteni.
+
+     Rovinne rameno ovlada z plneho twistu jen tri slozky: vx, vy, omega_z.
+     Zbyle tri jsou strukturalne nulove. Hodnost J proto nikdy neprekroci 3,
+     bez ohledu na pocet kloubu. Redundance znamena numDofs > rank(J), takze
+     na rovine je potreba ALESPON CTYRI klouby.
+
+     Trikloubove rameno (planar_3r) ma rank 3 pri 3 sloupcich, tedy nulovy
+     prostor dimenze 0 a jedine reseni -> efektivita vyjde presne 1 vzdy.
+     Ctyrkloubove ma nulovy prostor dimenze 1: existuje smer v prostoru
+     kloubu, po kterem se da hybat a tip se nehne vubec. -->
+<robot name="planar_4r">
+  <link name="base"/>
+  <link name="link1"/>
+  <link name="link2"/>
+  <link name="link3"/>
+  <link name="link4"/>
+  <link name="tip"/>
+
+  <joint name="j1" type="revolute">
+    <parent link="base"/><child link="link1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="j2" type="revolute">
+    <parent link="link1"/><child link="link2"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="j3" type="revolute">
+    <parent link="link2"/><child link="link3"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="j4" type="revolute">
+    <parent link="link3"/><child link="link4"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="tip_fixed" type="fixed">
+    <parent link="link4"/><child link="tip"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+  </joint>
+</robot>

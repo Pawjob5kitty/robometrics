@@ -185,4 +185,86 @@ std::vector<double> sigmaMinProfile(const Robot& robot, const std::vector<Eigen:
 /// Post: std::nullopt when traj is empty; otherwise a value >= 0.
 std::optional<double> dexterityMargin(const Robot& robot, const std::vector<Eigen::VectorXd>& traj);
 
+/// Path efficiency: how much of the joint motion in a rollout actually moved
+/// the end-effector.
+///
+///     E = optimal cost / actual cost,   in (0, 1]
+///
+/// per step, summed over the whole trajectory before dividing:
+///
+///     actual cost   = ||q[i] - q[i-1]||
+///     optimal cost  = ||J^+ * dx||
+///
+/// where dx is the twist the tip travelled over that step and J^+ is the
+/// pseudoinverse of the Jacobian at q[i-1]. J^+ * dx is the SMALLEST joint
+/// motion that would have produced the same tip displacement, so the ratio
+/// says what fraction of the joint motion was useful. E == 1 means every
+/// radian turned went into moving the tip; E == 0.5 means half the joint
+/// motion cancelled itself out and the tip never saw it.
+///
+/// For a redundant arm that wasted motion is real and physical: the joints can
+/// move against each other along the Jacobian's null space and the tip does
+/// not move at all. That is the motion this metric charges for.
+///
+/// READ THIS BEFORE TRUSTING A 1.0. Three limitations, and the first is the
+/// one that will actually mislead someone.
+///
+/// (1) A NON-REDUNDANT ROBOT ALWAYS SCORES 1. The condition for this metric to
+///     say anything at all is
+///
+///         numDofs() > rank(J)
+///
+///     Only then does J have a null space, i.e. a direction of joint motion
+///     that moves nothing. Without one, J*dq = dx has a unique solution, the
+///     minimum-norm solution IS the actual one, and the ratio is 1 by
+///     construction for every trajectory, however clumsy.
+///
+///     So this metric says something about a 7-DOF Franka and says NOTHING
+///     about a 6-DOF UR. A perfect 1.0 from a 6-DOF arm is not a compliment to
+///     the policy; it is a statement about the mechanism.
+///
+///     Count rank(J), not joints. rank(J) is bounded by the number of twist
+///     components the mechanism can actually produce, which can be well below
+///     6. A PLANAR arm drives only vx, vy and omega_z, so rank(J) <= 3 no
+///     matter how many joints it has -- which makes a planar 3R
+///     non-redundant here (rank 3, three columns, no null space) and a planar
+///     4R the smallest planar arm this metric can say anything about. Both
+///     cases are in the test suite as executable facts rather than warnings.
+///
+/// (2) THE OPTIMUM IS RELATIVE TO THIS CARTESIAN PATH. J^+ * dx is the
+///     cheapest way to follow the path the tip ACTUALLY took. It is not the
+///     cheapest way to get from the start pose to the end pose. A policy that
+///     drags the tip in a wide arc where a straight line would do can score a
+///     perfect 1.0, because every step of that arc was executed optimally.
+///     This measures joint-space waste, not task-space waste; the two are
+///     different failures and only one of them is visible here.
+///
+/// (3) DIMENSIONAL TRAP, KNOWN AND NOT FIXED IN v1. ||q[i] - q[i-1]|| adds
+///     radians and metres in quadrature whenever the robot mixes revolute and
+///     prismatic joints. The sum is then not a physical quantity at all, and
+///     its value shifts if the model is re-authored in millimetres. Both the
+///     numerator and the denominator carry the same defect, so the ratio is
+///     less wrong than either half -- but it is not right either, and it is
+///     not comparable between robots of different joint composition. The fix
+///     is a weighting matrix W and norms ||W * dq||; that is a change to the
+///     metric's definition, not a bug fix, so it is deliberately left for a
+///     caller who knows what weights their robot deserves.
+///
+/// A FOURTH, SMALLER ONE. dx comes from a finite difference between two
+/// recorded poses while J is a derivative at the start of the step, so the two
+/// agree only to first order. E can therefore exceed 1 slightly on coarse
+/// trajectories -- that is linearisation error, not a broken pseudoinverse.
+/// The overshoot is O(||dq||), so it is invisible at rollout sampling rates
+/// and obvious if someone feeds in four waypoints.
+///
+/// Pre:  every entry of traj has length robot.numDofs().
+/// Post: std::nullopt when traj has fewer than two points, or when the robot
+///       never moved (the denominator would be zero); otherwise a value > 0.
+///
+/// Note "never moved" is tested exactly, not against a threshold. Any epsilon
+/// would have to be in the mixed units of limitation (3), so there is no
+/// defensible value to pick; a trajectory that merely jitters returns a real
+/// but noisy number, and that is the caller's to interpret.
+std::optional<double> pathEfficiency(const Robot& robot, const std::vector<Eigen::VectorXd>& traj);
+
 }  // namespace robometrics
