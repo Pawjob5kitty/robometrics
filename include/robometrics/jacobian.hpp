@@ -7,13 +7,7 @@
 
 namespace robometrics {
 
-/// Geometric Jacobian in the base frame. Dimension 6 x numDofs().
-/// Rows 0..2 = translational part, rows 3..5 = rotational ([v; omega]).
-Eigen::MatrixXd jacobian(const Robot& robot, const Eigen::VectorXd& q);
-
-}  // namespace robometrics
-
-/// Hybrid geometric Jacobian: 6 x numDofs().
+/// Hybrid geometric Jacobian in the base frame. Dimension 6 x numDofs().
 ///
 /// Rows 0..2 = translational part, rows 3..5 = rotational ([v; omega]).
 ///
@@ -27,3 +21,6 @@ Eigen::MatrixXd jacobian(const Robot& robot, const Eigen::VectorXd& q);
 ///
 /// Mimic joints have no column of their own -- they contribute to their
 /// driver's column, scaled by mimicMultiplier.
+Eigen::MatrixXd jacobian(const Robot& robot, const Eigen::VectorXd& q);
+
+}  // namespace robometrics
