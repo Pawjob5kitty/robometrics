@@ -123,7 +123,7 @@ TEST_CASE("passing through a singularity produces exactly one span, in the right
   // and back to +1.2, so the profile has one dip in the middle.
   const Robot robot = planarArm();
   const int steps = 41;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     const double u = static_cast<double>(i) / (steps - 1);  // 0 .. 1
     return 1.2 * std::fabs(2.0 * u - 1.0);                  // 1.2 -> 0 -> 1.2
   });
@@ -155,7 +155,7 @@ TEST_CASE("span bounds are half-open and match the profile exactly") {
   // if the fixture geometry is ever tweaked.
   const Robot robot = planarArm();
   const int steps = 41;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     const double u = static_cast<double>(i) / (steps - 1);
     return 1.2 * std::fabs(2.0 * u - 1.0);
   });
@@ -181,7 +181,7 @@ TEST_CASE("two separate dips produce two spans, not one") {
   // separated by good steps.
   const Robot robot = planarArm();
   const int steps = 81;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     // Two V-shaped dips down to zero, at u = 0.25 and u = 0.75.
     const double u = static_cast<double>(i) / (steps - 1);
     const double d = std::min(std::fabs(u - 0.25), std::fabs(u - 0.75));
@@ -204,7 +204,7 @@ TEST_CASE("a span still open at the last step is closed at the end") {
   // looks like, which is the most interesting rollout in the batch.
   const Robot robot = planarArm();
   const int steps = 20;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     // Starts fine, ends stretched and stays there.
     const double u = static_cast<double>(i) / (steps - 1);
     return std::max(0.0, 1.2 * (1.0 - 2.0 * u));
@@ -221,7 +221,7 @@ TEST_CASE("a span open from the very first step starts at zero") {
   // iteration rather than on a transition.
   const Robot robot = planarArm();
   const int steps = 20;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     const double u = static_cast<double>(i) / (steps - 1);
     return 1.2 * u;  // starts stretched, opens up
   });
@@ -275,7 +275,7 @@ TEST_CASE("a higher threshold can only grow the flagged region") {
   // comparison drifted in a way the single-threshold tests happen to miss.
   const Robot robot = planarArm();
   const int steps = 41;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     const double u = static_cast<double>(i) / (steps - 1);
     return 1.2 * std::fabs(2.0 * u - 1.0);
   });
@@ -305,7 +305,7 @@ TEST_CASE("a rollout that recovers on the very last step ends its span there") {
   // it leaves the span open and swallows a good step into the flagged region.
   const Robot robot = planarArm();
   const int steps = 12;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     return (i == steps - 1) ? 1.2 : 0.0;  // stretched throughout, recovers at the end
   });
   const double threshold = 0.05;
@@ -328,7 +328,7 @@ TEST_CASE("every flagged step is below the threshold and every other one is not"
   // every single index. Any index arithmetic that is off anywhere fails here.
   const Robot robot = planarArm();
   const int steps = 61;
-  const Rollout r = makeRollout(steps, [steps](int i) {
+  const Rollout r = makeRollout(steps, [](int i) {
     const double u = static_cast<double>(i) / (steps - 1);
     const double d = std::min(std::fabs(u - 0.3), std::fabs(u - 0.8));
     return 4.0 * d;
