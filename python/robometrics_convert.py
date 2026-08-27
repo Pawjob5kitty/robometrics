@@ -130,45 +130,73 @@ def _finite(v: float) -> bool:
 # number is about the right thing, so it is spelled out rather than left to be
 # read off the code.
 #
-# LAYOUT. A robosuite-style demonstration file is a single HDF5 with:
+# Both claims below were checked against the actual libero_spatial release
+# (10 files, 500 demos, 62250 steps), not only against the generator source.
 #
-#     /data                          group, one child per demonstration
-#     /data/demo_0                   one episode
-#     /data/demo_0/obs/joint_pos     (T, n) float, joint angles per step
-#     /data/demo_0/actions           (T, a) float, what the policy commanded
-#     /data/demo_0/dones             (T,)   int,   episode-termination flags
-#     /data/demo_0/rewards           (T,)   float, per-step reward
-#     /data/<demo>.attrs["num_samples"]     step count
-#     /data.attrs["env_args"]        JSON string describing the environment
+# LAYOUT, as it really is on disk:
 #
-# q COMES FROM obs/joint_pos, NOT FROM actions. This is the single most
-# important line in this file. `actions` are commands in whatever space the
-# controller uses -- for LIBERO's default OSC controller they are end-effector
-# deltas, not joint angles at all, and even with a joint-space controller they
-# are targets the arm may never have reached. obs/joint_pos is the measured
-# state, which is what a kinematic metric has to be computed on. Using actions
-# would produce a full set of plausible numbers about a trajectory the robot
-# never executed.
+#     /data                             group, one child per demonstration
+#     /data.attrs["num_demos"]          50 per file
+#     /data.attrs["env_args"]           JSON: env_name, control_freq, ...
+#     /data.attrs["problem_info"]       JSON: language_instruction
+#     /data/demo_0/obs/joint_states     (T, 7)  float64  <- q, the arm
+#     /data/demo_0/obs/gripper_states   (T, 2)  float64  both fingers, measured
+#     /data/demo_0/obs/ee_states        (T, 6)  pos + axis-angle
+#     /data/demo_0/actions              (T, 7)
+#     /data/demo_0/robot_states         (T, 9)
+#     /data/demo_0/states               (T, 92) full simulator state
+#     /data/demo_0/rewards, dones       (T,)    uint8
 #
-# The arm joints only. robosuite concatenates gripper joints into some
-# observation keys; `joint_pos` is the arm, and `--gripper-key` can bring the
-# gripper in when the URDF being analysed includes the fingers. Mixing them
-# when the URDF does not expect them produces a width mismatch, which the C++
-# side rejects -- loudly, which is the desired outcome.
+# THE KEY IS obs/joint_states, NOT obs/joint_pos. The observable inside the
+# simulator is called robot0_joint_pos, but LIBERO's scripts/create_dataset.py
+# stores it under the name joint_states:
 #
-# SUCCESS is derived, not stored. robosuite files carry no success flag; the
-# convention across these datasets is that a demonstration reaching a nonzero
-# reward, or a `dones` flag of 1 before the recording ends, completed the task.
-# In practice LIBERO demonstrations are all successful by construction -- they
-# are human teleoperation kept only when the task was solved -- so the honest
-# default is 1 with the derivation recorded in the metadata, rather than a
-# number invented in silence. `success_source` in the output says which rule
-# fired, so a reader can tell a measured success from an assumed one.
+#     joint_states.append(obs["robot0_joint_pos"])            # line 201
+#     obs_grp.create_dataset("joint_states", data=...)        # line 243
+#
+# There is no obs/joint_pos in the files at all. An earlier version of this
+# converter looked for that name and would have failed on every demo.
+#
+# q COMES FROM obs/joint_states, NOT FROM actions. `actions` are commands in
+# whatever space the controller uses -- for LIBERO's default OSC controller
+# they are end-effector deltas, not joint angles at all, and even with a
+# joint-space controller they are targets the arm may never have reached.
+# joint_states is the measured state, which is what a kinematic metric has to
+# be computed on. Using actions would produce a full set of plausible numbers
+# about a trajectory the robot never executed.
+#
+# The arm only, seven values. Gripper fingers live in gripper_states and are
+# NOT appended by default: the analysed URDF is normally the arm alone, and a
+# width mismatch is exactly what the C++ side is there to reject. --gripper-key
+# brings them in for a URDF that models the fingers.
+#
+# SUCCESS CANNOT BE MEASURED FROM THESE FILES. create_dataset.py writes both
+# arrays unconditionally:
+#
+#     dones   = np.zeros(len(actions)); dones[-1]   = 1     # lines 224-227
+#     rewards = np.zeros(len(actions)); rewards[-1] = 1
+#
+# So a "reward > 0" test passes for every demonstration ever written, whatever
+# happened in it. Verified: across all 500 libero_spatial demos, rewards and
+# dones are exactly [0, ..., 0, 1] in 500 of 500 cases -- zero information.
+#
+# The value 1 is still correct, because LIBERO demonstrations are human
+# teleoperation kept only when the task was solved. What must not happen is
+# reporting it as MEASURED. The output therefore carries success_source, and
+# for these files it says "assumed", so a reader can tell a real success signal
+# from a convention. If a future dataset ever writes rewards that deviate from
+# that constant pattern, _libero_success notices and says so.
+#
+# OUTPUT NAMING. LIBERO files are called "<task>_demo.hdf5" and their episodes
+# "demo_<n>", so a trailing "_demo" is stripped from the file stem before
+# joining: "<task>_demo_0.csv" rather than "<task>_demo_demo_0.csv". The full
+# original filename stays in the `source` metadata key, so nothing is lost.
 #
 # TIME. robosuite does not store timestamps. They are synthesised from a fixed
-# control period (--dt, default 0.05 s = 20 Hz, LIBERO's default). Since every
-# metric in this library is geometric and never differentiates by time, this
-# only affects plot axes -- but it is synthesised, and the metadata says so.
+# control period (--dt, default 0.05 s = 20 Hz, matching env_args control_freq
+# in these files). Since every metric in this library is geometric and never
+# differentiates by time, this only affects plot axes -- but it is synthesised,
+# and the metadata says so.
 
 
 def read_libero(
@@ -186,7 +214,15 @@ def read_libero(
 
     import json
 
+    # LIBERO names every file "<task>_demo.hdf5" and every episode inside it
+    # "demo_<n>", so the naive stem + episode gives "<task>_demo_demo_0" -- the
+    # word twice, in an already 80-character name that ends up in the `file`
+    # column of every report. Trimming the file's trailing "_demo" loses
+    # nothing: which episode it was still comes from the episode name, and the
+    # untrimmed original is preserved in the `source` metadata key.
     stem = os.path.splitext(os.path.basename(path))[0]
+    if stem.endswith("_demo"):
+        stem = stem[: -len("_demo")]
 
     with h5py.File(path, "r") as f:
         if "data" not in f:
@@ -211,13 +247,13 @@ def read_libero(
             # that does not mention the ones it lost.
             try:
                 group = data[demo]
-                if "obs" not in group or "joint_pos" not in group["obs"]:
+                if "obs" not in group or "joint_states" not in group["obs"]:
                     raise ValueError(
-                        "no obs/joint_pos. Joint angles are the measured state and "
+                        "no obs/joint_states. Joint angles are the measured state and "
                         "cannot be substituted with actions; see the module docstring."
                     )
 
-                q = [list(map(float, row)) for row in group["obs"]["joint_pos"][()]]
+                q = [list(map(float, row)) for row in group["obs"]["joint_states"][()]]
 
                 if gripper_key:
                     if gripper_key not in group["obs"]:
@@ -225,7 +261,7 @@ def read_libero(
                     grip = group["obs"][gripper_key][()]
                     if len(grip) != len(q):
                         raise ValueError(
-                            f"{gripper_key} has {len(grip)} steps but joint_pos has {len(q)}"
+                            f"{gripper_key} has {len(grip)} steps but joint_states has {len(q)}"
                         )
                     q = [row + list(map(float, g)) for row, g in zip(q, grip)]
 
@@ -259,20 +295,29 @@ def _demo_sort_key(name: str):
 
 
 def _libero_success(group) -> tuple:
-    """Returns (success, rule-that-decided), never a bare guess."""
-    if "rewards" in group:
-        rewards = group["rewards"][()]
-        if len(rewards) and float(max(rewards)) > 0.0:
-            return 1, "reward>0"
-    if "dones" in group:
-        dones = group["dones"][()]
-        if len(dones) and int(dones[-1]) == 1:
-            return 1, "final done flag"
-    # No evidence either way. LIBERO demonstrations are successful by
-    # construction -- they are teleoperation kept only when the task was solved
-    # -- so 1 is the honest default, but the source field says it was assumed
-    # rather than measured.
-    return 1, "assumed (LIBERO demonstrations are filtered for success)"
+    """Returns (success, the rule that decided it), never a bare guess.
+
+    LIBERO's generator writes rewards and dones as the constant pattern
+    [0, ..., 0, 1] for every demonstration, so reading them proves nothing.
+    This checks for exactly that pattern and reports "assumed" when it finds
+    it, rather than dressing a constant up as a measurement.
+
+    A file whose rewards DEVIATE from the pattern is a different matter -- that
+    is a real signal and is reported as measured.
+    """
+    rewards = group["rewards"][()] if "rewards" in group else None
+    if rewards is not None and len(rewards):
+        n = len(rewards)
+        constant = [0] * (n - 1) + [1]
+        if [int(v) for v in rewards] != constant:
+            # Not the generator's constant, so somebody actually recorded
+            # something. Trust it.
+            return (1 if float(max(rewards)) > 0.0 else 0), "reward>0 (non-constant rewards)"
+
+    # The constant pattern, or no rewards at all. LIBERO demonstrations are
+    # human teleoperation filtered for success, so 1 is right -- but it is a
+    # property of how the dataset was built, not of this episode.
+    return 1, "assumed (LIBERO rewards/dones are written unconditionally)"
 
 
 # ---------------------------------------------------------------------------
