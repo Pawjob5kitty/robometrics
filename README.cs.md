@@ -182,4 +182,6 @@ Formát kontroluje `clang-format 21.1.8`.
 
 ## Licence
 
-TBD
+Apache License 2.0 — viz [LICENSE](LICENSE).
+
+Copyright 2026 Pawjob5kitty

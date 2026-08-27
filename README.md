@@ -190,4 +190,6 @@ assertions. Formatting is checked with `clang-format 21.1.8`.
 
 ## License
 
-TBD
+Apache License 2.0 — see [LICENSE](LICENSE).
+
+Copyright 2026 Pawjob5kitty
