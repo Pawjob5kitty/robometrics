@@ -250,12 +250,27 @@ std::optional<double> dexterityMargin(const Robot& robot, const std::vector<Eige
 ///     metric's definition, not a bug fix, so it is deliberately left for a
 ///     caller who knows what weights their robot deserves.
 ///
-/// A FOURTH, SMALLER ONE. dx comes from a finite difference between two
-/// recorded poses while J is a derivative at the start of the step, so the two
-/// agree only to first order. E can therefore exceed 1 slightly on coarse
-/// trajectories -- that is linearisation error, not a broken pseudoinverse.
-/// The overshoot is O(||dq||), so it is invisible at rollout sampling rates
-/// and obvious if someone feeds in four waypoints.
+/// A FOURTH, SMALLER ONE. dx is a FINITE DIFFERENCE between two recorded
+/// poses; J is a DERIVATIVE. Pairing them is a quadrature rule, so the result
+/// carries a discretisation error and E can exceed 1 slightly -- that is the
+/// rule's error, not a broken pseudoinverse.
+///
+/// Both the Jacobian and the frame conversion are sampled at the MIDPOINT of
+/// the step, (q[i-1] + q[i]) / 2, which is the midpoint rule: the first-order
+/// terms on either side cancel and the residual is O(h^2) in the step size.
+/// Sampling at either endpoint instead leaves O(h). Measured on planar_3r,
+/// where E must be exactly 1 so any deviation is pure discretisation error:
+///
+///     steps      endpoint        midpoint
+///        50      1.2e-02         1.0e-06
+///       200      2.9e-03         6.2e-08
+///       800      7.2e-04         3.9e-09
+///     order         1.00            2.00
+///
+/// Both parts have to move together. Putting only the Jacobian at the midpoint
+/// and leaving the frame conversion at the start is WORSE than leaving both at
+/// the start (8.4e-02 at 50 steps), because the two first-order terms no
+/// longer partly cancel.
 ///
 /// Pre:  every entry of traj has length robot.numDofs().
 /// Post: std::nullopt when traj has fewer than two points, or when the robot

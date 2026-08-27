@@ -398,29 +398,34 @@ TEST_CASE("degenerate trajectories have no efficiency") {
   CHECK(robometrics::pathEfficiency(robot, twoPoints).has_value());
 }
 
-TEST_CASE("the Jacobian is taken at the start of the step, not the end") {
-  // Added after a mutation check. Swapping q[i-1] for q[i] was caught only by
-  // the tolerance in the non-redundant test (1.0038 against a 1e-3 bound) --
-  // it would have slipped through the moment anybody relaxed that bound, and
-  // the refinement check could not see it at all, because the wrong endpoint
-  // still converges as the sampling is refined. It just converges from further
-  // away.
+TEST_CASE("the Jacobian is taken at the midpoint of the step, not at an endpoint") {
+  // dx is a finite difference over the step; J is a derivative at a point.
+  // Which point decides the order of the error, and the midpoint is the one
+  // that makes the first-order terms cancel.
   //
-  // So this pins the choice directly. One big step, where J at the two ends is
-  // genuinely different, and both candidate answers computed explicitly. The
-  // value of the test is the CONTRAST -- it does not re-derive the formula
-  // independently, it asserts which of two concrete numbers comes out.
+  // Pinned directly rather than through a tolerance: one big step, where the
+  // three candidate configurations give genuinely different answers, all three
+  // computed explicitly. The value of the test is the CONTRAST -- it does not
+  // re-derive the formula independently, it asserts which of three concrete
+  // numbers comes out.
   const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("planar_4r.urdf"));
 
-  const Eigen::VectorXd q0 = joints4(0.0, 1.3, -1.2, 0.9);
-  const Eigen::VectorXd q1 = joints4(1.0, -0.6, 1.1, -0.7);
+  // Chosen so that all three candidate sampling points give clearly different
+  // answers (0.234 / 0.667 / 0.175). With a step where two of them happen to
+  // coincide, the test would pass without discriminating anything.
+  const Eigen::VectorXd q0 = joints4(-0.5, 1.1, 0.4, -0.9);
+  const Eigen::VectorXd q1 = joints4(1.2, -0.9, -1.3, 1.1);
+  const Eigen::VectorXd qMid = 0.5 * (q0 + q1);
 
-  // The same step cost, computed with the Jacobian at a chosen configuration.
-  auto costWithJacobianAt = [&](const Eigen::VectorXd& qEval) {
+  // The step cost with the Jacobian AND the frame conversion sampled at one
+  // chosen configuration. Both move together; see the header for why splitting
+  // them is worse than either consistent choice.
+  auto costSampledAt = [&](const Eigen::VectorXd& qEval) {
     const robometrics::SE3 t0 = robometrics::forwardKinematics(robot, q0);
     const robometrics::SE3 t1 = robometrics::forwardKinematics(robot, q1);
+    const robometrics::SE3 tEval = robometrics::forwardKinematics(robot, qEval);
     const robometrics::Vec6 dxLocal = robometrics::log(t0.inverse() * t1);
-    const robometrics::SE3 rotOnly(t0.rotation(), robometrics::Vec3::Zero());
+    const robometrics::SE3 rotOnly(tEval.rotation(), robometrics::Vec3::Zero());
     const robometrics::Vec6 dx = robometrics::adjoint(rotOnly) * dxLocal;
 
     const Eigen::MatrixXd J = robometrics::jacobian(robot, qEval);
@@ -429,14 +434,82 @@ TEST_CASE("the Jacobian is taken at the start of the step, not the end") {
     return svd.solve(rhs).norm() / (q1 - q0).norm();
   };
 
-  const double atStart = costWithJacobianAt(q0);
-  const double atEnd = costWithJacobianAt(q1);
+  const double atStart = costSampledAt(q0);
+  const double atMid = costSampledAt(qMid);
+  const double atEnd = costSampledAt(q1);
 
-  // If these two ever coincided the test would prove nothing, so say so.
-  REQUIRE(std::fabs(atStart - atEnd) > 0.01);
+  // If any two coincided the test would prove nothing, so say so.
+  REQUIRE(std::fabs(atMid - atStart) > 0.01);
+  REQUIRE(std::fabs(atMid - atEnd) > 0.01);
 
   const std::optional<double> actual = robometrics::pathEfficiency(robot, {q0, q1});
   REQUIRE(actual.has_value());
-  CHECK(*actual == doctest::Approx(atStart).epsilon(1e-12));
+  CHECK(*actual == doctest::Approx(atMid).epsilon(1e-12));
+  CHECK(*actual != doctest::Approx(atStart).epsilon(1e-6));
   CHECK(*actual != doctest::Approx(atEnd).epsilon(1e-6));
+}
+
+TEST_CASE("the midpoint rule converges faster than sampling at the step start") {
+  // The claim the previous test cannot make: not merely a different number,
+  // but one that improves faster as the trajectory is refined.
+  //
+  // planar_3r is non-redundant, so E is exactly 1 for every trajectory and any
+  // deviation is purely quadrature error. Halving the step quarters that error
+  // for a second-order rule and only halves it for a first-order one.
+  const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("planar_3r.urdf"));
+
+  auto path = [](double u) {
+    Eigen::VectorXd q(3);
+    q << 0.9 * u, 0.8 - 0.6 * u, -0.2 + 0.7 * u;
+    return q;
+  };
+
+  // Start-of-step sampling, implemented here so the two schemes can be
+  // compared. This is what the library did before the midpoint change.
+  auto efficiencyAtStart = [&](int n) {
+    const std::vector<Eigen::VectorXd> traj = sampleTrajectory(n, path);
+    double opt = 0.0;
+    double act = 0.0;
+    for (std::size_t i = 1; i < traj.size(); ++i) {
+      const Eigen::VectorXd& a = traj[i - 1];
+      const Eigen::VectorXd& b = traj[i];
+      act += (b - a).norm();
+      const robometrics::SE3 ta = robometrics::forwardKinematics(robot, a);
+      const robometrics::SE3 tb = robometrics::forwardKinematics(robot, b);
+      const robometrics::SE3 rotOnly(ta.rotation(), robometrics::Vec3::Zero());
+      const robometrics::Vec6 dx =
+          robometrics::adjoint(rotOnly) * robometrics::log(ta.inverse() * tb);
+      const Eigen::MatrixXd J = robometrics::jacobian(robot, a);
+      Eigen::JacobiSVD<Eigen::MatrixXd> svd(J, Eigen::ComputeThinU | Eigen::ComputeThinV);
+      const Eigen::VectorXd rhs = dx;
+      opt += svd.solve(rhs).norm();
+    }
+    return opt / act;
+  };
+
+  auto midpointError = [&](int n) {
+    return std::fabs(*robometrics::pathEfficiency(robot, sampleTrajectory(n, path)) - 1.0);
+  };
+  auto startError = [&](int n) { return std::fabs(efficiencyAtStart(n) - 1.0); };
+
+  const double midCoarse = midpointError(100);
+  const double midFine = midpointError(200);
+  const double startCoarse = startError(100);
+  const double startFine = startError(200);
+
+  // Both schemes converge at all.
+  CHECK(midFine < midCoarse);
+  CHECK(startFine < startCoarse);
+
+  // First order halves the error, second order quarters it. Checked with room
+  // on both sides: this is about the ORDER, not about hitting 2.00 and 4.00.
+  const double startRatio = startCoarse / startFine;
+  const double midRatio = midCoarse / midFine;
+  CHECK(startRatio > 1.7);
+  CHECK(startRatio < 2.5);
+  CHECK(midRatio > 3.4);
+
+  // And it is not merely faster-converging but far more accurate at the same
+  // sampling: orders of magnitude, not percent.
+  CHECK(midCoarse < startCoarse / 100.0);
 }
