@@ -3,6 +3,8 @@
 #include <Eigen/SVD>
 #include <algorithm>
 
+#include "robometrics/jacobian.hpp"
+
 namespace robometrics {
 
 double sigmaMinTranslation(const Eigen::MatrixXd& J) {
@@ -16,6 +18,17 @@ double sigmaMinTranslation(const Eigen::MatrixXd& J) {
   // tail(1) by tedy vracelo nulu pro kazdou pozu.
   const Eigen::Index k = std::min(Jv.rows(), Jv.cols());
   return s(k - 1);
+}
+
+
+std::vector<double> sigmaMinProfile(const Robot& robot,
+                                    const std::vector<Eigen::VectorXd>& traj) {
+  std::vector<double> out;
+  out.reserve(traj.size());
+  for (const Eigen::VectorXd& q : traj) {
+    out.push_back(sigmaMinTranslation(jacobian(robot, q)));
+  }
+  return out;
 }
 
 }  // namespace robometrics
