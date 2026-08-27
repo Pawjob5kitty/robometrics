@@ -6,14 +6,11 @@
 #include "robometrics/jacobian.hpp"
 
 namespace {
-std::string fixture(const char* f) {
-  return std::string(ROBOMETRICS_FIXTURE_DIR) + "/" + f;
-}
+std::string fixture(const char* f) { return std::string(ROBOMETRICS_FIXTURE_DIR) + "/" + f; }
 }  // namespace
 
 TEST_CASE("jacobian ma rozmer 6 x numDofs") {
-  const robometrics::Robot robot =
-      robometrics::Robot::fromUrdfFile(fixture("two_joint.urdf"));
+  const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("two_joint.urdf"));
   const Eigen::VectorXd q = Eigen::VectorXd::Zero(robot.numDofs());
 
   const Eigen::MatrixXd J = robometrics::jacobian(robot, q);
@@ -22,8 +19,7 @@ TEST_CASE("jacobian ma rozmer 6 x numDofs") {
 }
 
 TEST_CASE("jacobian sedi s numerickou derivaci") {
-  const robometrics::Robot robot =
-      robometrics::Robot::fromUrdfFile(fixture("two_joint.urdf"));
+  const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("two_joint.urdf"));
 
   Eigen::VectorXd q(robot.numDofs());
   q << 0.4, -0.7;
@@ -45,7 +41,7 @@ TEST_CASE("jacobian sedi s numerickou derivaci") {
     const robometrics::SE3 T = robometrics::forwardKinematics(robot, q);
     const robometrics::SE3 rotOnly(T.rotation(), robometrics::Vec3::Zero());
     const robometrics::Vec6 inBase = robometrics::adjoint(rotOnly) * numeric;
-  
+
     CHECK((J.col(i) - inBase).cwiseAbs().maxCoeff() < 1e-6);
   }
 }
@@ -55,8 +51,7 @@ TEST_CASE("jednokloubovy robot, sloupec spocitany rucne") {
   // Pri q=0 a otaceni rychlosti 1:
   //   omega = (0, 0, 1)
   //   v     = omega x (p_tip - p_joint) = (0,0,1) x (0.5,0,0) = (0, 0.5, 0)
-  const robometrics::Robot robot =
-      robometrics::Robot::fromUrdfFile(fixture("single_joint.urdf"));
+  const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("single_joint.urdf"));
 
   Eigen::VectorXd q(1);
   q << 0.0;
@@ -64,8 +59,10 @@ TEST_CASE("jednokloubovy robot, sloupec spocitany rucne") {
   const Eigen::MatrixXd J = robometrics::jacobian(robot, q);
 
   robometrics::Vec6 expected;
+  // clang-format off
   expected << 0.0, 0.5, 0.0,   // v
               0.0, 0.0, 1.0;   // omega
+  // clang-format on
 
   CHECK((J.col(0) - expected).cwiseAbs().maxCoeff() < 1e-12);
 }
@@ -89,7 +86,8 @@ TEST_CASE("numericka derivace sedi i s mimic klouby") {
 
     const robometrics::Vec6 numeric =
         robometrics::log(robometrics::forwardKinematics(robot, qm).inverse() *
-                         robometrics::forwardKinematics(robot, qp)) / (2.0 * h);
+                         robometrics::forwardKinematics(robot, qp)) /
+        (2.0 * h);
     const robometrics::Vec6 inBase = robometrics::adjoint(rotOnly) * numeric;
 
     CHECK((J.col(i) - inBase).cwiseAbs().maxCoeff() < 1e-6);

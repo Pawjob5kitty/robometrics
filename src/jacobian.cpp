@@ -1,8 +1,7 @@
 #include "robometrics/jacobian.hpp"
-#include "robometrics/se3.hpp"
 #include <Eigen/Geometry>
 #include <vector>
-
+#include "robometrics/se3.hpp"
 
 namespace robometrics {
 
@@ -32,8 +31,7 @@ Eigen::MatrixXd jacobian(const Robot& robot, const Eigen::VectorXd& q) {
       v = axisWorld.cross(pTip - frame.translation());
     }
 
-    const int col = joint.isMimic() ? robot.joint(joint.mimicSource).dofIndex
-                                    : joint.dofIndex;
+    const int col = joint.isMimic() ? robot.joint(joint.mimicSource).dofIndex : joint.dofIndex;
     const double scale = joint.isMimic() ? joint.mimicMultiplier : 1.0;
 
     J.block<3, 1>(0, col) += scale * v;
