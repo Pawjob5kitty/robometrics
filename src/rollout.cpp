@@ -18,10 +18,8 @@ namespace {
   throw RolloutError(source, line, std::move(detail));
 }
 
-// Trims ASCII whitespace from both ends. Fields are trimmed because real files
-// come out of spreadsheets and hand edits with stray spaces around the commas,
-// and rejecting those would be pedantry about something that cannot be
-// ambiguous.
+// Fields are trimmed because real files come out of spreadsheets and hand edits
+// with stray spaces around the commas.
 std::string_view trim(std::string_view s) {
   const auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\r'; };
   while (!s.empty() && isSpace(s.front())) {
@@ -33,9 +31,8 @@ std::string_view trim(std::string_view s) {
   return s;
 }
 
-// Splits on commas without trimming; the caller trims what it needs. Returns
-// exactly one field for an empty line, which is what makes an empty data row
-// report "expected N fields, found 1" rather than being silently skipped.
+// Returns exactly one field for an empty line, which is what makes an empty
+// data row report "expected N fields, found 1" rather than being skipped.
 std::vector<std::string_view> splitFields(std::string_view line) {
   std::vector<std::string_view> out;
   std::size_t start = 0;
@@ -50,14 +47,11 @@ std::vector<std::string_view> splitFields(std::string_view line) {
   }
 }
 
-// std::from_chars rather than stod or istringstream: it is locale-independent.
-// That matters more than it looks -- a machine with a Czech or German locale
-// reads "0.05" as 0 with strtod-family functions, and the rollout would parse
-// without error into a trajectory that never moves. from_chars has no locale
-// to get wrong.
-//
-// It also rejects trailing junk, so "0.05abc" fails instead of silently
-// becoming 0.05.
+// std::from_chars rather than stod: it is locale-independent. Under a Czech or
+// German locale the strtod family reads "0.05" as 0, and the rollout would
+// parse without error into a trajectory that never moves -- a silent wrong
+// answer. from_chars also rejects trailing junk, so "0.05abc" fails rather than
+// quietly becoming 0.05.
 bool parseDouble(std::string_view text, double& out) {
   if (text.empty()) {
     return false;
@@ -78,11 +72,9 @@ bool parseInt(std::string_view text, int& out) {
   return r.ec == std::errc() && r.ptr == last;
 }
 
-// Shortest decimal form that round-trips back to the same double. This is what
-// keeps written files readable -- 0.05 stays "0.05" instead of becoming
-// 0.050000000000000003 -- while still guaranteeing that a load-save-load cycle
-// is bit-exact. setprecision(17) would guarantee the round trip too, but at
-// the cost of making every file unreadable.
+// Shortest decimal form that round-trips. Keeps files readable -- 0.05 stays
+// "0.05" rather than 0.050000000000000003 -- while load-save-load stays
+// bit-exact. setprecision(17) would round-trip too, at the cost of readability.
 std::string formatDouble(double value) {
   char buffer[64];
   const std::to_chars_result r = std::to_chars(buffer, buffer + sizeof(buffer), value);
@@ -141,10 +133,8 @@ Rollout parseRollout(const std::string& text, const std::string& source) {
 
   while (std::getline(in, rawLine)) {
     ++lineNo;
-    // getline leaves the '\r' of a CRLF file attached to every line. Stripping
-    // it here rather than at each use is the difference between this parser
-    // working on a file authored on Windows and failing on every numeric field
-    // of it.
+    // getline leaves the '\r' of a CRLF file attached to every line; without
+    // stripping it, every last numeric field on a Windows-authored file fails.
     const std::string_view line = trim(rawLine);
 
     if (line.empty()) {
@@ -155,9 +145,7 @@ Rollout parseRollout(const std::string& text, const std::string& source) {
       const std::string_view body = trim(line.substr(1));
       const std::size_t colon = body.find(':');
       if (colon == std::string_view::npos) {
-        // A comment with no key: value, such as the version banner. Ignored on
-        // purpose -- see the header for why the banner is not mandatory.
-        continue;
+        continue;  // a plain comment, such as the version banner
       }
       const std::string key(trim(body.substr(0, colon)));
       const std::string value(trim(body.substr(colon + 1)));
@@ -191,9 +179,8 @@ Rollout parseRollout(const std::string& text, const std::string& source) {
   const std::size_t expectedFields = static_cast<std::size_t>(rollout.dofs) + 1;
 
   // --- Column header must agree with dofs --------------------------------
-  // The check exists because the alternative is worse than a parse error: a
-  // file whose header says q0..q5 while dofs says 7 is a converter bug, and
-  // without this it would surface much later as a wrong metric.
+  // A file whose header says q0..q5 while dofs says 7 is a converter bug that
+  // would otherwise surface much later as a wrong metric.
   {
     const std::vector<std::string_view> columns = splitFields(trim(rawLine));
     if (columns.size() != expectedFields) {
@@ -225,9 +212,9 @@ Rollout parseRollout(const std::string& text, const std::string& source) {
       continue;
     }
     if (line.front() == '#') {
-      // Metadata is a header-only construct. A `#` line down among the data is
-      // more likely a half-deleted row than an intentional comment, so it is
-      // rejected rather than skipped.
+      // A `#` line among the data is more likely a half-deleted row than a
+      // comment, so it is rejected rather than skipped -- skipping would
+      // silently drop a step.
       fail(source, lineNo, "'#' lines are only allowed in the header, before the column line");
     }
 
@@ -243,36 +230,25 @@ Rollout parseRollout(const std::string& text, const std::string& source) {
     if (!parseDouble(trim(fields[0]), time)) {
       fail(source, lineNo, "column 1 (t) is not a number: '" + std::string(trim(fields[0])) + "'");
     }
-    // from_chars accepts "nan", "inf" and "-infinity" as perfectly valid
-    // floating-point text, so a finiteness check is a SEPARATE step from
-    // parsing, not a consequence of it. Without it a NaN would sail through
-    // here and reappear as a NaN metric several layers away, where nothing
-    // left points back at the row that produced it.
+    // from_chars accepts "nan", "inf" and "-infinity" as valid floating-point
+    // text, so finiteness is a SEPARATE check. Without it a NaN sails through
+    // and reappears as a NaN metric several layers away.
     if (!std::isfinite(time)) {
       fail(source, lineNo,
            "column 1 (t) is not a finite number: '" + std::string(trim(fields[0])) + "'");
     }
-    // Monotonicity. A timestamp that goes BACKWARDS means the rows are out of
-    // order, which is unambiguously a bug in whatever wrote the file, and it
-    // would silently reverse a segment of the trajectory.
+    // A timestamp going BACKWARDS means the rows are out of order, which would
+    // silently reverse a segment of the trajectory.
     //
-    // Equal consecutive timestamps are ALLOWED, and that is a deliberate line
-    // rather than an oversight. A duplicate instant is ambiguous: it can be a
-    // duplicated row, but it is just as often a clock too coarse to separate
-    // two samples, which real converters do produce. Since none of the metrics
-    // in this library differentiate by time -- they are all geometric -- an
-    // equal timestamp costs nothing, while rejecting it would throw away an
-    // otherwise sound rollout. If a caller ever needs strict increase, this is
-    // the one comparison to tighten.
+    // Equal consecutive timestamps are ALLOWED, deliberately. A duplicate
+    // instant is ambiguous -- a duplicated row, or just as often a clock too
+    // coarse to separate two samples, which real converters produce. No metric
+    // here differentiates by time, so it costs nothing, while rejecting it
+    // would throw away an otherwise sound rollout.
     //
-    // KNOWN CONSEQUENCE, worth writing down before it bites: this tolerance is
-    // only free while every metric is geometric. The moment a TIME-BASED
-    // metric arrives -- joint velocity, jerk, time-to-completion, anything
-    // dividing by dt -- a pair of equal timestamps is a division by zero, and
-    // the guard will have to move from "must not decrease" to "must strictly
-    // increase". At that point this line becomes the place to change, and
-    // existing rollouts with duplicate instants become invalid input rather
-    // than merely odd.
+    // That tolerance expires the moment a TIME-BASED metric arrives: anything
+    // dividing by dt turns a pair of equal timestamps into a division by zero,
+    // and this comparison has to tighten to strictly increasing.
     if (!rollout.t.empty() && time < rollout.t.back()) {
       std::ostringstream msg;
       msg << "t must not decrease: " << formatDouble(time) << " follows "
@@ -300,10 +276,8 @@ Rollout parseRollout(const std::string& text, const std::string& source) {
     rollout.q.push_back(std::move(q));
   }
 
-  // A file with a valid header and no data rows is a rollout of zero steps,
-  // not an error. Recordings do get cut short, and the caller is better placed
-  // to decide whether that is worth complaining about -- the metrics already
-  // return nullopt for it.
+  // A valid header with no data rows is a rollout of zero steps, not an error:
+  // recordings do get cut short, and the metrics already return nullopt for it.
   return rollout;
 }
 
@@ -325,13 +299,10 @@ std::string formatRollout(const Rollout& rollout) {
   std::ostringstream out;
   out << "# robometrics rollout v1\n";
 
-  // std::map iterates in sorted key order, so the output is deterministic and
-  // two runs produce byte-identical files. That is what makes these files
-  // diffable, which was half the reason for choosing a text format.
-  //
-  // `dofs` is written from the struct field rather than from meta, so that a
-  // caller who built a Rollout by hand and forgot to set meta["dofs"] still
-  // gets a valid file instead of one that cannot be read back.
+  // std::map iterates in sorted key order, so two runs produce byte-identical
+  // files -- which is what makes them diffable. `dofs` comes from the struct
+  // field, so a caller who built a Rollout by hand and forgot meta["dofs"]
+  // still gets a file that reads back.
   out << "# dofs: " << rollout.dofs << "\n";
   for (const auto& [key, value] : rollout.meta) {
     if (key == "dofs") {

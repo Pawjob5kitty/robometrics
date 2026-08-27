@@ -9,16 +9,11 @@
 
 /// Reading and writing recorded rollouts.
 ///
-/// WHY A HOME-GROWN TEXT FORMAT rather than HDF5 or a JSON library. The C++
-/// core of this project is meant to build anywhere that has Eigen and pugixml,
-/// and nothing else. Every dependency added here is a dependency for someone
-/// who only wants to compute a Jacobian.
-///
-/// The formats the data actually arrives in -- LIBERO/robosuite HDF5, LeRobot
-/// parquet -- are converted by an optional Python script in python/, outside
-/// the build. That puts the messy, fast-moving, vendor-specific part where it
-/// can change without recompiling anything, and leaves C++ reading one small
-/// format whose parser fits on a screen.
+/// A home-grown text format rather than HDF5 or a JSON library, so the C++ core
+/// builds anywhere that has Eigen and pugixml and nothing else. The formats the
+/// data actually arrives in are converted by an optional Python script in
+/// python/, outside the build -- that is also the fastest-moving part, and it
+/// can change there without recompiling anything.
 ///
 /// THE FORMAT, by example:
 ///
@@ -36,18 +31,17 @@
 ///     colon is a plain comment and is ignored, which is what makes the
 ///     version banner on the first line legal.
 ///   - `dofs` is REQUIRED. Everything else is optional; unknown keys are kept
-///     verbatim in `meta` rather than rejected, so a converter can record
-///     provenance (task name, seed, source file) without this parser needing
-///     to learn about it.
+///     verbatim in `meta`, so a converter can record provenance without this
+///     parser learning about it.
 ///   - The first non-comment line is the column header and must be exactly
-///     `t,q0,...,q{dofs-1}`. Checking it against `dofs` is the point: a file
-///     whose header and metadata disagree is a converter bug, and finding it
-///     here beats finding it as a wrong metric three steps later.
-///   - Every data row has dofs + 1 numeric fields, and every one of them must
-///     be FINITE. "nan" and "inf" are valid floating-point text and would
-///     parse; they are rejected explicitly, with the row and column named,
-///     because a NaN that gets through here reappears as a NaN metric far
-///     away with nothing left pointing back at the row that produced it.
+///     `t,q0,...,q{dofs-1}`. A file whose header and metadata disagree is a
+///     converter bug, and catching it here beats catching it as a wrong metric
+///     three steps later.
+///   - Every data row has dofs + 1 numeric fields, and every one must be
+///     FINITE. "nan" and "inf" are valid floating-point text and would parse;
+///     they are rejected with the row and column named, because a NaN that gets
+///     through reappears as a NaN metric far away with nothing pointing back at
+///     the row that produced it.
 ///   - `t` must not DECREASE from one row to the next. A backwards timestamp
 ///     means the rows are out of order, which would silently reverse a
 ///     segment of the trajectory. Equal consecutive timestamps are ALLOWED,
@@ -59,9 +53,8 @@
 ///     metres for prismatic ones. The file carries no units field because a
 ///     units field that can be wrong is worse than a convention that cannot.
 ///
-/// Text, not binary, and deliberately so: a rollout that misbehaves can be
-/// opened, diffed, and hand-edited. At rollout sizes (hundreds of rows) the
-/// space cost is irrelevant.
+/// Text, not binary: a rollout that misbehaves can be opened, diffed and
+/// hand-edited, and at hundreds of rows the space cost is irrelevant.
 namespace robometrics {
 
 /// One recorded trajectory.
@@ -73,17 +66,14 @@ struct Rollout {
   /// Joint configurations, one per step, each of length `dofs`.
   std::vector<Eigen::VectorXd> q;
 
-  /// Everything from the `#` header, unparsed. `dofs` is present here too even
-  /// though it is also stored below; keeping the raw text means a writer can
-  /// reproduce the file it read.
+  /// Everything from the `#` header, unparsed. `dofs` appears here as well as
+  /// below, so a writer can reproduce the file it read.
   std::map<std::string, std::string> meta;
 
-  /// Degrees of freedom, from the `dofs` metadata key.
-  ///
-  /// Stored explicitly rather than derived from `q.front().size()` because a
-  /// rollout with zero steps is a legal file -- a recording that was cut short
-  /// -- and it still knows how wide it is. Deriving would make that case
-  /// silently zero-dimensional.
+  /// Degrees of freedom, from the `dofs` metadata key. Stored explicitly
+  /// rather than derived from q.front().size(), because a rollout with zero
+  /// steps is a legal file -- a recording cut short -- and still knows how wide
+  /// it is. Deriving would make that case silently zero-dimensional.
   int dofs = 0;
 
   /// Number of steps. Equal to t.size() and to q.size(); the parser will not
@@ -93,10 +83,8 @@ struct Rollout {
 
 /// Thrown for every malformed rollout file.
 ///
-/// Carries the line number separately from the message so that a caller can
-/// act on it, and so that no message can be written without one. The same
-/// reasoning as UrdfError in urdf.hpp: on a 400-row file, "parse error" is not
-/// a diagnostic.
+/// Carries the line number separately, so no message can be written without
+/// one. On a 400-row file, "parse error" is not a diagnostic.
 ///
 /// Message format:  "demo_001.csv:12: expected 8 fields, found 7"
 class RolloutError : public std::runtime_error {
@@ -130,17 +118,15 @@ Rollout loadRollout(const std::string& path);
 
 /// Parses a rollout already in memory.
 ///
-/// `source` is only used to label error messages. Exposed separately from
-/// loadRollout so tests can state a malformed file inline and still exercise
-/// exactly the code path a real file takes.
+/// `source` only labels error messages. Separate from loadRollout so tests can
+/// state a malformed file inline and still take the path a real file takes.
 Rollout parseRollout(const std::string& text, const std::string& source = "<string>");
 
 /// Serialises a rollout back to the text format.
 ///
-/// Post: parseRollout(formatRollout(r)) reproduces r EXACTLY, including the
-///       floating-point values. Numbers are written with the shortest decimal
-///       form that round-trips, so the file stays readable (0.05 stays "0.05")
-///       without losing a bit.
+/// Post: parseRollout(formatRollout(r)) reproduces r EXACTLY, floating-point
+///       values included. Numbers use the shortest decimal form that
+///       round-trips, so files stay readable (0.05 stays "0.05") losslessly.
 std::string formatRollout(const Rollout& rollout);
 
 /// formatRollout, straight to a file.

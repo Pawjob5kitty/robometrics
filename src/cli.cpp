@@ -49,14 +49,9 @@ const char* kUsage =
     "goes to stderr, so a pipeline can consume the CSV while a person reads\n"
     "the summary.\n";
 
-/// Parses one `--flag value` pair. Returns false and fills `error` on trouble.
-///
-/// Hand-rolled rather than pulled from a library, because the argument surface
-/// is five flags and a file list, and a dependency for that would cost more
-/// than it saves. The one rule worth stating: a flag that takes a value must
-/// find one, and running off the end of argv is an error rather than a silently
-/// empty string -- `--urdf` with nothing after it is a typo, not a request to
-/// load the file named "".
+/// Parses one `--flag value` pair. A flag that takes a value must find one:
+/// running off the end of argv is an error, not a silently empty string --
+/// `--urdf` with nothing after it is a typo, not a request to load "".
 bool takeValue(const std::vector<std::string>& args, std::size_t& i, const char* flag,
                std::string& target, std::string& error) {
   if (i + 1 >= args.size()) {
@@ -70,9 +65,8 @@ bool takeValue(const std::vector<std::string>& args, std::size_t& i, const char*
 bool parseOptions(const std::vector<std::string>& args, Options& opts, std::string& error) {
   std::size_t i = 0;
 
-  // The subcommand. There is exactly one today; requiring it anyway keeps the
-  // door open for `robometrics compare` or `robometrics plot` without ever
-  // having to break the existing invocation.
+  // One subcommand today; requiring it keeps the door open for others without
+  // breaking the existing invocation.
   if (i < args.size() && (args[i] == "-h" || args[i] == "--help")) {
     opts.help = true;
     return true;
@@ -121,10 +115,9 @@ bool parseOptions(const std::vector<std::string>& args, Options& opts, std::stri
         return false;
       }
     } else if (a.rfind("--", 0) == 0) {
-      // Rejecting unknown flags rather than treating them as filenames: a
-      // mistyped --thresold would otherwise be read as a rollout path and
-      // reported as a missing file, which sends the reader looking in
-      // completely the wrong place.
+      // Unknown flags are rejected rather than treated as filenames: a
+      // mistyped --thresold would otherwise be reported as a missing file and
+      // send the reader looking in the wrong place.
       error = "unknown option '" + a + "'";
       return false;
     } else {
@@ -138,36 +131,26 @@ bool parseOptions(const std::vector<std::string>& args, Options& opts, std::stri
 // Formatting
 // ---------------------------------------------------------------------------
 
-/// Six significant digits in the default (general) format, so 0.184 stays
-/// "0.184" instead of becoming "0.184000". Enough precision to compare two
-/// runs, few enough digits to read a column of them.
+/// Six significant digits, so 0.184 stays "0.184" rather than "0.184000".
 std::string num(double v) {
   std::ostringstream s;
   s << std::setprecision(6) << v;
   return s.str();
 }
 
-/// Below this, a dexterity value is numerical noise around zero rather than a
-/// measurement. An exactly singular pose comes out of the SVD as something
-/// like 8.7e-17 -- the accumulated rounding of the decomposition, not a
-/// physical quantity -- and printing it suggests a precision the number does
-/// not have, while making a column of results impossible to scan.
-///
-/// 1e-12 is eleven orders of magnitude below the default threshold of 0.05, so
-/// nothing that could ever matter is lost by flattening it. The clamp is
-/// applied at OUTPUT only: analyze() and the metrics keep the raw value, so
-/// nothing downstream inherits a rounding decision made for a report.
+/// Below this a dexterity value is numerical noise, not a measurement: just off
+/// a singularity sigma_min comes out around 1.3e-13 from cancellation, and
+/// printing it claims a precision it does not have. Eleven orders below the
+/// default threshold of 0.05, so nothing that matters is lost. Applied at
+/// OUTPUT only -- analyze() and the metrics keep the raw value.
 constexpr double kNoiseFloor = 1e-12;
 
 /// Formats a metric value, flattening denormal-scale noise to a clean zero.
 std::string metricNum(double v) { return num(std::fabs(v) < kNoiseFloor ? 0.0 : v); }
 
-/// An absent optional becomes an EMPTY field, not 0 and not "nan".
-///
-/// This matters more than it looks. A rollout too short to have a path
-/// efficiency is not a rollout with efficiency zero, and writing 0 there would
-/// make it the worst row in the file. Empty is what every spreadsheet and
-/// dataframe library reads back as missing.
+/// An absent optional becomes an EMPTY field, not 0. A rollout too short to
+/// have a path efficiency is not one with efficiency zero, and 0 would make it
+/// the worst row in the file. Empty is what a dataframe reads back as missing.
 std::string optNum(const std::optional<double>& v) { return v.has_value() ? metricNum(*v) : ""; }
 
 /// Minimal RFC4180 quoting, for paths containing a comma or a quote.
@@ -190,16 +173,10 @@ std::string csvField(const std::string& text) {
 // Summary statistics
 // ---------------------------------------------------------------------------
 
-/// Nearest-rank percentile on an ascending-sorted vector.
-///
-/// No interpolation, deliberately: every number the summary prints is then a
-/// value that actually occurred in some rollout, which is what you want when
-/// the next step is to go and look at that rollout. An interpolated p05 is a
-/// number no run produced, and "which file was that?" has no answer.
-///
-/// The same rule is used for the median, so for an even count it reports the
-/// lower of the two middle values rather than their average -- consistent with
-/// the above, and one less special case.
+/// Nearest-rank percentile, no interpolation: every number the summary prints
+/// is then a value some rollout actually produced, so "which file was that?"
+/// has an answer. The median follows the same rule, reporting the lower of the
+/// two middle values for an even count rather than their average.
 double percentile(const std::vector<double>& sorted, double p) {
   if (sorted.empty()) {
     return 0.0;  // callers check emptiness first; this is not reachable
@@ -227,16 +204,14 @@ void printStat(std::ostream& err, const char* label, std::vector<double> values)
 /// Largest Jacobian rank the robot reaches over a sample of the rollout's own
 /// configurations.
 ///
-/// Rank has to be measured, not counted. It is bounded by the number of twist
-/// components the mechanism can actually produce, which is well below 6 for a
-/// planar arm -- a planar 3R has three joints and rank 3, and is therefore NOT
-/// redundant despite "three joints for a two-dimensional task" sounding like
-/// it should be.
+/// Rank is measured, not counted: it is bounded by the number of twist
+/// components the mechanism can produce, well below 6 for a planar arm. A
+/// planar 3R has three joints and rank 3, so it is NOT redundant.
 ///
-/// The maximum over several configurations rather than the rank at one: a
-/// singular pose has a lower rank than the mechanism generically has, so
-/// probing a single configuration could report a perfectly ordinary arm as
-/// redundant purely because the rollout happened to start stretched out.
+/// The maximum over several configurations, not the rank at one: a singular
+/// pose has lower rank than the mechanism generically does, so a single probe
+/// could call an ordinary arm redundant just because the rollout started
+/// stretched out.
 Eigen::Index maxJacobianRank(const Robot& robot, const Rollout& rollout) {
   constexpr std::size_t kSamples = 16;
   const std::size_t stride = std::max<std::size_t>(1, rollout.size() / kSamples);
@@ -257,10 +232,9 @@ Eigen::Index maxJacobianRank(const Robot& robot, const Rollout& rollout) {
 // Per-rollout profile output
 // ---------------------------------------------------------------------------
 
-/// One CSV per rollout: step index, timestamp, dexterity. For plotting, which
-/// is why the step index is there as its own column -- a span is reported in
-/// step indices, and a plot the reader cannot index the same way is a plot
-/// they cannot line up with the report.
+/// One CSV per rollout: step index, timestamp, dexterity. The step index is its
+/// own column because spans are reported in step indices, and a plot that
+/// cannot be indexed the same way cannot be lined up with the report.
 bool writeProfile(const std::string& dir, const std::string& inputPath, const Rollout& rollout,
                   const RolloutReport& report, std::ostream& err) {
   std::error_code ec;
@@ -312,9 +286,8 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     return 2;
   }
 
-  // The robot is loaded once. A failure here is fatal rather than per-file,
-  // because without it there is nothing to analyse against -- unlike a corrupt
-  // rollout, which only costs one row.
+  // Loaded once; a failure here is fatal rather than per-file, because without
+  // it there is nothing to analyse against.
   std::optional<Robot> robot;
   try {
     robot = opts.tipLink.empty() ? Robot::fromUrdfFile(opts.urdf)
@@ -354,23 +327,19 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
       rollout = loadRollout(path);
       report = analyze(*robot, rollout, opts.threshold);
     } catch (const std::exception& e) {
-      // One bad file must not end the run. This is the whole reason the exit
-      // code is "at least one succeeded" rather than "none failed": a batch of
-      // forty rollouts with one corrupt file is a successful batch with a
-      // warning, not a failed run.
+      // One bad file must not end the run -- which is why the exit code is "at
+      // least one succeeded" rather than "none failed".
       err << "skipping " << path << ": " << e.what() << "\n";
       ++failed;
       continue;
     }
     ++ok;
 
-    // Said once, on the first rollout that loads, and only because a reader
-    // who does not know this will draw exactly the wrong conclusion from the
-    // column. path_efficiency is the ratio of the minimum-norm joint motion to
-    // the actual one; without a null space those are the same vector, so the
-    // ratio is 1 for every rollout however clumsy the policy was. A column of
-    // 1.000 then looks like a flawless policy and is in fact a statement about
-    // the mechanism.
+    // Said once, because a reader who does not know this draws exactly the
+    // wrong conclusion: without a null space the minimum-norm motion IS the
+    // actual one, so path_efficiency is 1 for every rollout however clumsy. A
+    // column of 1.000 looks like a flawless policy and is a statement about the
+    // mechanism.
     if (!redundancyChecked) {
       redundancyChecked = true;
       const Eigen::Index rank = maxJacobianRank(*robot, rollout);
@@ -398,14 +367,13 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     }
     if (!report.lowDexteritySpans.empty()) {
       ++withSpans;
-      // The localisation, in the one place a person actually reads. A count in
-      // a CSV column says a rollout was bad; this says which frames to open.
+      // The localisation. A count in a CSV column says a rollout was bad; this
+      // says which frames to open.
       err << path << ": " << report.lowDexteritySpans.size() << " low-dexterity span"
           << (report.lowDexteritySpans.size() == 1 ? "" : "s");
       for (const auto& span : report.lowDexteritySpans) {
-        // Printed INCLUSIVE for a human -- the struct is half-open, so the
-        // last bad step is end - 1. Getting this wrong would report a step the
-        // robot was fine at.
+        // INCLUSIVE for a human; the struct is half-open, so the last bad step
+        // is end - 1. Getting this wrong names a step the robot was fine at.
         err << "  [" << span.begin << ".." << span.end - 1 << " worst " << metricNum(span.worst)
             << "]";
       }

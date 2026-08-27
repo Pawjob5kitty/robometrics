@@ -1,14 +1,11 @@
-// Tests for analyze() and, mostly, for span localisation.
+// Tests for analyze(), mostly for span localisation -- the part where a
+// one-off index error is invisible in the aggregate numbers. Most of what
+// follows is about boundaries: a span starting at the first step, one still
+// open at the last, one exactly at the threshold.
 //
-// The spans are the part of this layer that earns its keep, and they are also
-// the part where a one-off index error is invisible in the aggregate numbers.
-// Most of what follows is therefore about boundaries: a span starting at the
-// first step, one still open at the last, one exactly at the threshold.
-//
-// Where a test needs a specific profile shape rather than a specific robot, it
-// builds the profile directly through a synthetic rollout on planar_arm, whose
-// singularity is at a known configuration. That keeps the assertions about
-// span arithmetic from being entangled with assertions about kinematics.
+// Profile shapes come from synthetic rollouts on planar_arm, whose singularity
+// sits at a known configuration, so assertions about span arithmetic stay
+// disentangled from assertions about kinematics.
 
 #include <doctest/doctest.h>
 
@@ -298,15 +295,14 @@ TEST_CASE("a higher threshold can only grow the flagged region") {
 }
 
 TEST_CASE("a rollout that recovers on the very last step ends its span there") {
-  // Added after a mutation check. Skipping the last element of the scan loop
-  // survived every other test in this file, because the "close whatever is
-  // still open" step uses profile.size() rather than the loop index -- so a
-  // span that runs to the end still came out with the right bounds.
+  // The shape that catches a scan loop stopping one element short. Every other
+  // test here survives that, because the "close whatever is still open" step
+  // uses profile.size() rather than the loop index, so a span running to the
+  // end still comes out with the right bounds.
   //
-  // It is only visible in this shape: bad all the way to the second-to-last
-  // step, GOOD on the last one. The correct span stops before that final step;
-  // a scan that never looks at it leaves the span open and swallows a good
-  // step into the flagged region.
+  // Only this shape shows it: bad to the second-to-last step, GOOD on the last.
+  // The correct span stops before that final step; a scan that never looks at
+  // it leaves the span open and swallows a good step into the flagged region.
   const Robot robot = planarArm();
   const int steps = 12;
   const Rollout r = makeRollout(steps, [steps](int i) {

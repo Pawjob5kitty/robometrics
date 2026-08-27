@@ -1,9 +1,5 @@
-// Testy jsou specifikace: existují dřív než implementace a popisují, co má
-// platit. Dokud `exp`/`log`/`adjoint` házejí std::logic_error, jsou označené
-// `doctest::may_fail()` — pořád se spustí a vypíšou, ale nesestřelí návratový
-// kód, takže CI zůstane zelená. Jak zprovozníš implementaci, dekorátor
-// `* doctest::may_fail()` u daného testu SMAŽ, jinak by ti nadále tiše
-// procházel i rozbitý kód.
+// Tests for the SE(3) core. Each case names the invariant it pins and what a
+// break in it would look like.
 
 #include <doctest/doctest.h>
 #include <rapidcheck.h>

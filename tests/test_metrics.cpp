@@ -1,10 +1,9 @@
 // Tests for the kinematic quality metrics.
 //
-// The singularity tests use planar_arm: a 2R arm with two parallel z axes and
-// links of 0.3 + 0.3. It is the textbook singularity -- with the arm fully
-// stretched the tip lies on the line through both joints and cannot move
-// radially at all. Everything here is checked against that one pose, because
-// it is the case where the right answer is known without computing anything.
+// The singularity tests use planar_arm, a 2R arm with parallel z axes and links
+// of 0.3 + 0.3: fully stretched, the tip lies on the line through both joints
+// and cannot move radially. The right answer there is known without computing
+// anything.
 
 #include <doctest/doctest.h>
 

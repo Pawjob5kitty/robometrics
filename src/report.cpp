@@ -11,12 +11,10 @@ namespace {
 
 // Scans the profile for contiguous runs below the threshold.
 //
-// Written as an explicit state machine over one pass rather than with
-// find_if/adjacent_find, because the two places this can go wrong -- a run that
-// starts at index 0, and a run still open when the profile ends -- are both
-// about the BOUNDARIES, and a loop with an explicit "close whatever is open
-// after the loop" step makes them visible instead of hiding them inside an
-// algorithm's end condition.
+// An explicit state machine rather than find_if/adjacent_find: the two places
+// this goes wrong -- a run starting at index 0, and one still open when the
+// profile ends -- are both boundaries, and an explicit "close whatever is open"
+// step after the loop makes them visible.
 std::vector<RolloutReport::Span> findLowSpans(const std::vector<double>& profile,
                                               double threshold) {
   std::vector<RolloutReport::Span> spans;
@@ -68,10 +66,9 @@ RolloutReport analyze(const Robot& robot, const Rollout& rollout, double thresho
 
   RolloutReport report;
 
-  // The profile is computed once and everything else is read off it. Calling
-  // dexterityMargin() as well would recompute the entire profile internally,
-  // and worse, would leave two code paths that could disagree about what the
-  // minimum was.
+  // Computed once and everything else read off it. Calling dexterityMargin()
+  // as well would recompute the profile internally and leave two code paths
+  // that could disagree about the minimum.
   report.dexterityProfile = sigmaMinProfile(robot, rollout.q);
 
   if (!report.dexterityProfile.empty()) {

@@ -6,9 +6,8 @@
 namespace robometrics {
 namespace {
 
-// A dimension mismatch is a caller bug -- the wrong vector was handed in --
-// not a malformed input file, so it does not go through UrdfError. Everything
-// UrdfError carries (which element, which attribute) would be empty here.
+// A caller bug, not a malformed input file, so not UrdfError: everything that
+// carries (which element, which attribute) would be empty here.
 void requireMatchingSize(const Robot& robot, const Eigen::VectorXd& q) {
   if (q.size() == robot.numDofs()) {
     return;
@@ -32,9 +31,8 @@ double jointValue(const Robot& robot, const Joint& joint, const Eigen::VectorXd&
   if (!joint.isMimic()) {
     return q(joint.dofIndex);
   }
-  // Single-level only: the parser rejects a mimic whose source is itself a
-  // mimic, so one lookup is enough and no recursion or cycle check is needed
-  // here. That restriction is what keeps this function a straight line.
+  // Single-level only -- the parser rejects a mimic of a mimic -- so one lookup
+  // suffices and no cycle check is needed.
   const Joint& source = robot.joint(joint.mimicSource);
   return joint.mimicMultiplier * q(source.dofIndex) + joint.mimicOffset;
 }
@@ -43,10 +41,10 @@ SE3 jointTransform(const Joint& joint, double value) {
   switch (joint.type) {
     case JointType::Revolute:
     case JointType::Continuous: {
-      // The axis is a unit vector and `value` is the angle, so axis * value is
-      // precisely the rotation vector rodrigues() wants. This is where the
-      // parser's normalisation pays off: an axis of length 5 would silently
-      // turn every commanded angle into five times that angle.
+      // axis is a unit vector and value is the angle, so axis * value is the
+      // rotation vector rodrigues() wants. This is where the parser's
+      // normalisation pays off: an axis of length 5 would silently turn every
+      // commanded angle into five times that angle.
       const SE3 motion(rodrigues(joint.axis * value), Vec3::Zero());
       return joint.originTransform * motion;
     }
@@ -57,26 +55,21 @@ SE3 jointTransform(const Joint& joint, double value) {
     case JointType::Fixed:
       break;
   }
-  // Unreachable: the parser folds fixed joints away and never emits one into
-  // the joint array. Returning the origin rather than throwing keeps this
-  // function total, which matters because it sits in the inner loop.
+  // Unreachable: the parser never emits a fixed joint into the joint array.
+  // Returning the origin keeps this function total; it sits in the inner loop.
   return joint.originTransform;
 }
 
 std::vector<SE3> forwardKinematicsAll(const Robot& robot, const Eigen::VectorXd& q) {
   requireMatchingSize(robot, q);
 
-  // Pass one: pose of each JOINT frame.
-  //
-  // Joints are stored in topological order, so joint i's parent is always at a
-  // smaller index and its pose is already final by the time we reach i. That is
-  // the entire reason the parser sorts them -- forward kinematics collapses to
-  // a single forward sweep with no recursion, no stack, and no revisiting.
+  // Pass one: pose of each JOINT frame. Joints are topologically sorted, so a
+  // parent's pose is already final by the time we reach the child -- one
+  // forward sweep, no recursion.
   //
   // A mimic joint needs its source's VALUE, not its pose, and jointValue()
-  // reads that straight out of q. So mimic joints impose no ordering constraint
-  // of their own; the source may sit at a higher index, or on a different
-  // branch entirely.
+  // reads that from q. Mimic joints therefore impose no ordering constraint of
+  // their own; the source may sit at a higher index or on another branch.
   std::vector<SE3> jointPoses;
   jointPoses.reserve(static_cast<std::size_t>(robot.numJoints()));
   for (int i = 0; i < robot.numJoints(); ++i) {
@@ -91,12 +84,10 @@ std::vector<SE3> forwardKinematicsAll(const Robot& robot, const Eigen::VectorXd&
     }
   }
 
-  // Pass two: pose of each LINK.
-  //
-  // A link is rigidly attached to its supporting joint, offset by the fixed
-  // transforms the parser folded into Link::offset. Links with no supporting
-  // joint are rigid with respect to the root, which covers the root itself
-  // (offset == identity) and any fixed frame bolted to the base.
+  // Pass two: pose of each LINK. A link is rigidly attached to its supporting
+  // joint, offset by the fixed transforms folded into Link::offset. A link with
+  // no supporting joint is rigid with respect to the root -- the root itself,
+  // or any fixed frame bolted to the base.
   std::vector<SE3> linkPoses;
   linkPoses.reserve(static_cast<std::size_t>(robot.numLinks()));
   for (int i = 0; i < robot.numLinks(); ++i) {
@@ -111,9 +102,7 @@ std::vector<SE3> forwardKinematicsAll(const Robot& robot, const Eigen::VectorXd&
 }
 
 SE3 forwardKinematics(const Robot& robot, const Eigen::VectorXd& q) {
-  // Deliberately the same code path as forwardKinematicsAll rather than a
-  // root-to-tip walk. Two implementations of the same formula drift apart, and
-  // the test that they agree is only as good as the cases it covers.
+  // The same code path as forwardKinematicsAll, deliberately; see the header.
   const std::vector<SE3> all = forwardKinematicsAll(robot, q);
   return all[static_cast<std::size_t>(robot.tipLinkIndex())];
 }

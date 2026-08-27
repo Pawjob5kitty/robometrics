@@ -1,10 +1,9 @@
 // End-to-end tests for the command line.
 //
 // These drive runCli() directly rather than spawning the built binary. The
-// files are real files on a real filesystem and the CSV is really produced, so
-// the slice under test is the whole one -- what is skipped is the subprocess
-// plumbing, whose failures would be indistinguishable from failures of the
-// code being tested. See cli.hpp.
+// files are real and the CSV is really produced; what is skipped is subprocess
+// plumbing, whose failures would be indistinguishable from failures of the code
+// under test. See cli.hpp.
 
 #include <doctest/doctest.h>
 
@@ -471,15 +470,11 @@ TEST_CASE("a rollout with no computable metrics leaves empty fields, not zeros")
 // ---------------------------------------------------------------------------
 
 TEST_CASE("numerical noise near a singularity prints as a clean zero") {
-  // Added properly after a mutation check. The first version of this test used
-  // q1 == 0 exactly, where the SVD returns a clean 0.0 on its own -- so it
-  // passed with the clamp removed and proved nothing.
-  //
-  // The noise appears just OFF the singularity, where sigma_min is a genuinely
-  // tiny number produced by cancellation rather than measurement: at
-  // q1 = 1e-12 it comes out around 1.3e-13. Printing that claims a precision
-  // the number does not have and makes a column of results unscannable, while
-  // being eleven orders below anything that could matter.
+  // The noise appears just OFF the singularity, not at it: at q1 == 0 exactly
+  // the SVD returns a clean 0.0 on its own, so that configuration would pass
+  // with the clamp removed and prove nothing. At q1 = 1e-12 sigma_min comes out
+  // around 1.3e-13 from cancellation -- a precision the number does not have,
+  // and eleven orders below anything that could matter.
   const TempDir dir;
   const std::string input = dir.write("sing.csv", rolloutText(std::vector<double>(12, 1e-12), 1));
 

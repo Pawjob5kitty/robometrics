@@ -1,11 +1,8 @@
 // Tests for the rollout text format.
 //
-// Error cases are stated inline as strings rather than as fixture files. That
-// is the opposite choice from test_urdf.cpp, and deliberate: a malformed
-// rollout is three lines long and reads better next to the assertion about it,
-// whereas a malformed URDF needs its whole tree to be malformed in context.
-// One real file on disk covers the loadRollout() path so the string-based
-// tests are not testing a road that nothing drives on.
+// Error cases are inline strings rather than fixture files -- the opposite of
+// test_urdf.cpp, because a malformed rollout is three lines and reads better
+// next to its assertion. One real file on disk covers the loadRollout() path.
 
 #include <doctest/doctest.h>
 

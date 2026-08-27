@@ -8,21 +8,15 @@
 #include <utility>
 #include <vector>
 
-// Parsing runs in two stages, and the split is the main structural idea in this
-// file.
+// Parsing runs in two stages. Stage one (RawJoint, parseJoint) transcribes the
+// XML with link and joint references still stored as names, and reports every
+// attribute-level error while the offending element is still in hand. Stage two
+// (buildRobot) turns names into indices, walks the tree and folds fixed joints;
+// every error there is topological.
 //
-//   Stage one (RawJoint, parseJoint): a literal transcription of the XML, with
-//   link and joint references still stored as names. Every attribute-level
-//   error -- a missing axis, a non-numeric limit, an unknown joint type -- is
-//   reported here, while the offending element is still in hand.
-//
-//   Stage two (buildRobot): names become indices, the tree is walked, and fixed
-//   joints are folded. Every error here is topological -- two parents, a cycle,
-//   an unreachable link.
-//
-// Keeping them apart is what makes the error messages specific. A single-pass
-// parser has to report "something is wrong with this robot" because by the time
-// it notices, it no longer knows which element it came from.
+// The split is what makes the messages specific: a single-pass parser has to
+// say "something is wrong with this robot", because by the time it notices it
+// no longer knows which element the trouble came from.
 
 namespace robometrics {
 namespace {
@@ -30,9 +24,7 @@ namespace {
 // ---------------------------------------------------------------------------
 // Error reporting
 // ---------------------------------------------------------------------------
-// Every throw goes through fail(), which requires a location. That is a
-// constraint on this file rather than a convenience: the failure mode being
-// designed against is a 3000-line URDF and a message that says "parse error".
+// Every throw goes through fail(), which requires a location.
 
 [[noreturn]] void fail(std::string where, std::string detail) {
   throw UrdfError(std::move(where), std::move(detail));
@@ -51,10 +43,6 @@ std::string jointWhere(const std::string& name, const char* element) {
 // Reads exactly one double. std::stod would accept "1.0abc" and "0x10"; an
 // istringstream plus an explicit end-of-input check rejects anything that is
 // not precisely one number.
-//
-// The out-parameter rather than std::optional keeps the caller's error context
-// where it belongs -- the caller knows which attribute of which element this
-// was, and can say so.
 bool parseDouble(const std::string& text, double& out) {
   std::istringstream in(text);
   in >> out;
@@ -133,32 +121,19 @@ Vec3 requireVec3Attr(const pugi::xml_node& node, const char* attrName, const std
 //
 //     R = Rz(yaw) * Ry(pitch) * Rx(roll)
 //
-// Read right to left as the order of application: roll about the FIXED x axis
-// first, then pitch about the FIXED y, then yaw about the FIXED z. The same
-// matrix comes out of the intrinsic ZYX convention (rotate about z, then about
-// the NEW y, then the NEW x), which is why both descriptions of "rpy"
-// circulate in the literature. Those two agree. What does not agree is
-// Rx*Ry*Rz, which parses every real URDF without complaint and describes a
-// different robot.
+// Read right to left: roll about the FIXED x, then pitch about the FIXED y,
+// then yaw about the FIXED z. The same matrix comes out of the intrinsic ZYX
+// convention, which is why both descriptions circulate; they agree. What does
+// not agree is Rx*Ry*Rz, which parses every real URDF without complaint and
+// describes a different robot.
 //
-// Worked example, so the order can be checked by hand. For rpy = (pi/2, pi/2, 0):
+// A test using only rpy = (0, 0, something) cannot tell the two apart: with two
+// of the three angles zero the product order does not matter. tests/test_urdf
+// pins it with rpy = (pi/2, pi/2, 0), where they differ.
 //
-//   Rx(pi/2) = | 1  0  0 |        Ry(pi/2) = |  0  0  1 |
-//              | 0  0 -1 |                   |  0  1  0 |
-//              | 0  1  0 |                   | -1  0  0 |
-//
-//   Rz(0)*Ry*Rx = |  0  1  0 |        but    Rx*Ry*Rz = | 0  0  1 |
-//                 |  0  0 -1 |                          | 1  0  0 |
-//                 | -1  0  0 |                          | 0  1  0 |
-//
-// Same three angles, different matrices. That pair is what the rpy tests pin
-// down; a test using only rpy = (0, 0, something) cannot tell the two apart,
-// because with two of the three angles zero the product order does not matter.
-//
-// Composing three rodrigues() calls instead of writing out nine entries keeps
-// one source of truth for what a rotation is. If the handedness convention in
-// rodrigues() were ever wrong, this function would be wrong in the same
-// direction rather than silently disagreeing with the rest of the library.
+// Composing three rodrigues() calls keeps one source of truth for what a
+// rotation is: if the handedness convention there were wrong, this would be
+// wrong the same way rather than silently disagreeing.
 Mat3 rpyToMatrix(const Vec3& rpy) {
   const Mat3 rx = rodrigues(Vec3::UnitX() * rpy.x());
   const Mat3 ry = rodrigues(Vec3::UnitY() * rpy.y());
@@ -226,12 +201,10 @@ struct RawJoint {
 void parseAxis(const pugi::xml_node& node, RawJoint& raw) {
   const pugi::xml_node axis = node.child("axis");
 
-  // The spec gives <axis> a default of "1 0 0" when omitted. This parser
-  // deliberately requires it instead. A missing axis is almost always an
-  // authoring mistake, and quietly rotating about x produces a robot that looks
-  // plausible and is wrong -- the worst possible failure mode for a library
-  // whose entire output is geometry. Fixed joints have no axis and never reach
-  // this function.
+  // The spec defaults <axis> to "1 0 0" when omitted; this parser requires it
+  // instead. A missing axis is almost always an authoring mistake, and quietly
+  // rotating about x produces a robot that looks plausible and is wrong -- the
+  // worst failure mode for a library whose entire output is geometry.
   if (!axis) {
     fail(jointWhere(raw.name),
          "a " + std::string(jointTypeName(raw.type)) +
@@ -254,9 +227,8 @@ void parseLimits(const pugi::xml_node& node, RawJoint& raw) {
   const pugi::xml_node limit = node.child("limit");
   const std::string where = jointWhere(raw.name, "limit");
 
-  // Continuous joints are unbounded by definition, so <limit> is optional for
-  // them; revolute and prismatic joints are bounded by definition, so it is
-  // required. That split comes from the spec, it is not a house rule.
+  // Continuous joints are unbounded by definition, revolute and prismatic ones
+  // are bounded by definition. That split is the spec's, not a house rule.
   if (!limit) {
     if (raw.type == JointType::Continuous) {
       return;
@@ -266,10 +238,9 @@ void parseLimits(const pugi::xml_node& node, RawJoint& raw) {
   }
 
   if (raw.type == JointType::Continuous) {
-    // Present but contradictory: a continuous joint carrying lower/upper is
-    // arguing with itself. Rejecting the file would be harsh, since exporters
-    // emit this, but the bounds must not be stored -- keeping them would make
-    // an unbounded joint report as limited.
+    // Present but contradictory. Rejecting the file would be harsh since
+    // exporters emit this, but the bounds must not be stored -- keeping them
+    // would make an unbounded joint report as limited.
     raw.lowerLimit = -kUnbounded;
     raw.upperLimit = kUnbounded;
   } else {
@@ -282,9 +253,8 @@ void parseLimits(const pugi::xml_node& node, RawJoint& raw) {
     }
   }
 
-  // 'effort' and 'velocity' are required by the spec but irrelevant to
-  // kinematics, and hand-written URDFs routinely omit them. Rejecting a file
-  // over a number this library never reads would be pedantry.
+  // 'effort' and 'velocity' are spec-required but irrelevant to kinematics, and
+  // hand-written URDFs routinely omit them.
   raw.velocityLimit = optionalDoubleAttr(limit, "velocity", kUnbounded, where);
   raw.effortLimit = optionalDoubleAttr(limit, "effort", kUnbounded, where);
 }
@@ -460,8 +430,8 @@ Robot buildRobot(const pugi::xml_node& robotNode, const std::string* requestedTi
 
   // --- Step 2: find the root --------------------------------------------
   // The root is the single link that is never anybody's child. Building the
-  // incoming-joint table on the way also catches the "two parents" case, which
-  // is a graph but not a tree and would make forward kinematics ambiguous.
+  // incoming-joint table also catches the "two parents" case, which is a graph
+  // but not a tree and would make forward kinematics ambiguous.
   std::vector<int> incomingJoint(numLinks, -1);
   std::vector<std::vector<int>> outgoingJoints(numLinks);
   for (std::size_t j = 0; j < numRaw; ++j) {
@@ -505,16 +475,14 @@ Robot buildRobot(const pugi::xml_node& robotNode, const std::string* requestedTi
 
   // --- Steps 3 to 5: one walk does sorting, folding and link placement ---
   // A depth-first walk from the root visits every parent before its children,
-  // so movable joints come out in topological order for free -- no separate
-  // sorting pass, and parentJoint is always an index that already exists.
+  // so movable joints come out topologically sorted for free.
   //
-  // Two quantities are carried down the tree per link, exactly the pair
-  // documented on Link: which movable joint supports it, and its offset inside
-  // that joint's frame. A fixed joint EXTENDS the offset; a movable joint RESETS
-  // it and opens a new joint frame. That is the whole folding rule, and it is
-  // why a trailing fixed chain (hand -> flange -> grasp target) survives:
-  // folding only forward into the next movable joint would have nowhere to put
-  // it and would silently drop it.
+  // Two quantities are carried down per link, the pair documented on Link:
+  // which movable joint supports it, and its offset inside that joint's frame.
+  // A fixed joint EXTENDS the offset; a movable joint RESETS it and opens a new
+  // frame. That is the whole folding rule, and it is why a trailing fixed chain
+  // (hand -> flange -> grasp target) survives: folding only forward into the
+  // next movable joint would have nowhere to put it.
   std::vector<Joint> joints;
   std::vector<Link> links(numLinks);
   for (std::size_t i = 0; i < numLinks; ++i) {
