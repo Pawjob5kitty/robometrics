@@ -9,7 +9,7 @@ namespace {
 std::string fixture(const char* f) { return std::string(ROBOMETRICS_FIXTURE_DIR) + "/" + f; }
 }  // namespace
 
-TEST_CASE("jacobian ma rozmer 6 x numDofs") {
+TEST_CASE("jacobian has dimension 6 x numDofs") {
   const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("two_joint.urdf"));
   const Eigen::VectorXd q = Eigen::VectorXd::Zero(robot.numDofs());
 
@@ -18,7 +18,7 @@ TEST_CASE("jacobian ma rozmer 6 x numDofs") {
   CHECK(J.cols() == robot.numDofs());
 }
 
-TEST_CASE("jacobian sedi s numerickou derivaci") {
+TEST_CASE("jacobian matches the numeric derivative") {
   const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("two_joint.urdf"));
 
   Eigen::VectorXd q(robot.numDofs());
@@ -35,7 +35,7 @@ TEST_CASE("jacobian sedi s numerickou derivaci") {
     const robometrics::SE3 Tp = robometrics::forwardKinematics(robot, qp);
     const robometrics::SE3 Tm = robometrics::forwardKinematics(robot, qm);
 
-    // twist mezi dvema blizkymi polohami, deleno krokem
+    // twist between two nearby poses, divided by the step
     const robometrics::Vec6 numeric = robometrics::log(Tm.inverse() * Tp) / (2.0 * h);
 
     const robometrics::SE3 T = robometrics::forwardKinematics(robot, q);
@@ -46,9 +46,9 @@ TEST_CASE("jacobian sedi s numerickou derivaci") {
   }
 }
 
-TEST_CASE("jednokloubovy robot, sloupec spocitany rucne") {
-  // Kloub kolem z v (0,0,0.1), rameno 0.5 podel x -> tip v (0.5, 0, 0.1).
-  // Pri q=0 a otaceni rychlosti 1:
+TEST_CASE("single-joint robot, column computed by hand") {
+  // Joint about z at (0,0,0.1), a 0.5 arm along x -> tip at (0.5, 0, 0.1).
+  // At q=0 and unit rotation rate:
   //   omega = (0, 0, 1)
   //   v     = omega x (p_tip - p_joint) = (0,0,1) x (0.5,0,0) = (0, 0.5, 0)
   const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("single_joint.urdf"));
@@ -67,7 +67,7 @@ TEST_CASE("jednokloubovy robot, sloupec spocitany rucne") {
   CHECK((J.col(0) - expected).cwiseAbs().maxCoeff() < 1e-12);
 }
 
-TEST_CASE("numericka derivace sedi i s mimic klouby") {
+TEST_CASE("the numeric derivative matches even with mimic joints") {
   const robometrics::Robot robot =
       robometrics::Robot::fromUrdfFile(fixture("mimic_gripper.urdf"), "hand");
 

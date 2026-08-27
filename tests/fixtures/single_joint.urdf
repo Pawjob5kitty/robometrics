@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
-<!-- Jeden revolute kloub kolem z ve vysce 0.1, a za nim fixed rameno delky 0.5
-     ve smeru x. Rameno je dulezite: kdyby tip lezel NA ose otaceni, rotace by
-     na jeho poloze nebyla videt a test by prosel i pro R = I.
+<!-- One revolute joint about z at height 0.1, followed by a fixed 0.5 arm
+     along x. The arm matters: if the tip sat ON the axis of rotation, the
+     rotation would not show in its position and the test would pass for R = I.
 
-     Ocekavane hodnoty pro tip jsou rucne spocitane v test_kinematics.cpp. -->
+     The expected tip values are hand-computed in test_kinematics.cpp. -->
 <robot name="single_joint">
   <link name="base"/>
   <link name="arm"/>

@@ -7,21 +7,23 @@
 
 namespace robometrics {
 
-/// Geometricky Jacobian v ramci baze. Rozmer 6 x numDofs().
-/// Radky 0..2 = translacni cast, radky 3..5 = rotacni ([v; omega]).
+/// Geometric Jacobian in the base frame. Dimension 6 x numDofs().
+/// Rows 0..2 = translational part, rows 3..5 = rotational ([v; omega]).
 Eigen::MatrixXd jacobian(const Robot& robot, const Eigen::VectorXd& q);
 
 }  // namespace robometrics
 
-/// Hybrid geometricky Jacobian: 6 x numDofs().
+/// Hybrid geometric Jacobian: 6 x numDofs().
 ///
-/// Radky 0..2 = translacni cast, radky 3..5 = rotacni ([v; omega]).
+/// Rows 0..2 = translational part, rows 3..5 = rotational ([v; omega]).
 ///
-/// KONVENCE — v literature se dela obema zpusoby a zamena se tise prelozi:
-///   hybrid  (tady) — rychlost bodu NA CHAPADLE, vyjadrena v orientaci baze
-///   spatial        — rychlost fiktivniho bodu telesa v pocatku baze
-/// Lisi se o omega x p_tip. Numericka kontrola proti FK musi prevadet
-/// adjunktem SAMOTNE ROTACE, ne cele transformace.
+/// CONVENTION -- the literature does this both ways and a mix-up compiles
+/// silently:
+///   hybrid  (here) -- velocity of the point ON THE GRIPPER, in the base
+///                     orientation
+///   spatial        -- velocity of a fictitious body point at the base origin
+/// They differ by omega x p_tip. A numeric check against FK must convert with
+/// the adjoint of the ROTATION ALONE, not of the full transform.
 ///
-/// Mimic klouby nemaji vlastni sloupec — prispivaji do sloupce sveho
-/// driveru, vynasobene mimicMultiplier.
+/// Mimic joints have no column of their own -- they contribute to their
+/// driver's column, scaled by mimicMultiplier.

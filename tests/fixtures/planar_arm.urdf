@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
-<!-- Rovinne rameno 2R: dva rovnobezne klouby kolem z, mezi nimi a za nimi
-     rameno delky 0.3. Klasicky ucebnicovy priklad singularity:
-     pri q2 = 0 je rameno natazene a tip se nemuze hnout radialne. -->
+<!-- Planar 2R arm: two parallel z axes with links of 0.3 between and beyond
+     them. The textbook singularity: at q2 = 0 the arm is fully stretched and
+     the tip cannot move radially. -->
 <robot name="planar_arm">
   <link name="base"/>
   <link name="link1"/>

@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
-<!-- Tvar, ktery ma kazdy realny manipulator s chapadlem:
+<!-- The shape every real manipulator with a gripper has:
 
        base  [arm revolute]>  hand  [finger_left  prismatic]>  left
                                     [finger_right prismatic, mimic]>  right
 
-     (V XML komentari nesmi byt dve pomlcky za sebou, takze sipky jsou
-     zkracene. Neni to preklep.)
+     (An XML comment may not contain two consecutive hyphens, so the arrows
+     above are shortened. Not a typo.)
 
-     Dve veci, ktere se tim testuji:
-       1. dva listy (left, right) znamenaji, ze autodetekce tipu musi selhat
-          s vypisem kandidatu, ne hadat
-       2. finger_right ma mimic, takze se pocita mezi numJoints(), ale ne do
-          numDofs(); q ma delku 2, ne 3
+     Two things this exercises:
+       1. two leaves (left, right), so tip auto-detection must fail and list
+          the candidates rather than guess
+       2. finger_right has a mimic, so it counts towards numJoints() but not
+          numDofs(); q has length 2, not 3
 
-     multiplier je nastaveny na minus jedna: prsty jedou proti sobe. -->
+     multiplier is minus one: the fingers move against each other. -->
 <robot name="mimic_gripper">
   <link name="base"/>
   <link name="hand"/>

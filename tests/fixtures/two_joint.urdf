@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
-<!-- Nejmensi smysluplny retez: baze + dva revolute klouby, zadny fixed.
-     Jediny list je link2, takze autodetekce tipu ho musi najit sama. -->
+<!-- The smallest meaningful chain: a base and two revolute joints, no fixed
+     ones. link2 is the only leaf, so tip auto-detection has to find it. -->
 <robot name="two_joint">
   <link name="base"/>
   <link name="link1"/>

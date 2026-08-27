@@ -1,15 +1,15 @@
 <?xml version="1.0"?>
-<!-- Tri origin bloky s rucne spocitanymi rotacemi. Vsechny klouby jsou
-     revolute, aby se origin dal cist primo z Joint::originTransform (fixed
-     klouby by se slozily a bylo by to neprehledne).
+<!-- Three origin blocks with hand-computed rotations. Every joint is revolute
+     so the origin can be read straight off Joint::originTransform; fixed joints
+     would be folded away and the reading would be indirect.
 
-     Uhly jsou pi/2 na plnou presnost double: 1.5707963267948966.
+     The angles are pi/2 at full double precision: 1.5707963267948966.
 
      case_yaw    rpy = (0, 0, pi/2)
-     case_rp     rpy = (pi/2, pi/2, 0)   <- rozlisuje Rz*Ry*Rx od Rx*Ry*Rz
+     case_rp     rpy = (pi/2, pi/2, 0)   <- distinguishes Rz*Ry*Rx from Rx*Ry*Rz
      case_ry     rpy = (pi/2, 0, pi/2)
 
-     Ocekavane matice jsou vypsane v tests/test_urdf.cpp vcetne odvozeni. -->
+     The expected matrices, with their derivations, are in tests/test_urdf.cpp. -->
 <robot name="rpy_cases">
   <link name="base"/>
   <link name="l1"/>

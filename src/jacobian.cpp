@@ -6,16 +6,16 @@
 namespace robometrics {
 
 Eigen::MatrixXd jacobian(const Robot& robot, const Eigen::VectorXd& q) {
-  // 1. poloha vsech ramcu
+  // 1. pose of every frame
   const std::vector<SE3> poses = forwardKinematicsAll(robot, q);
 
-  // 2. pozice chapadla
+  // 2. gripper position
   const Vec3 pTip = poses[static_cast<std::size_t>(robot.tipLinkIndex())].translation();
 
-  // 3. prazdna matice 6 x numDofs, vynulovana
+  // 3. empty 6 x numDofs matrix, zeroed
   Eigen::MatrixXd J = Eigen::MatrixXd::Zero(6, robot.numDofs());
 
-  // 4. pro kazdy kloub: spocitat prispevek a pricist do spravneho sloupce
+  // 4. for each joint: compute the contribution and add it to the right column
   for (int i = 0; i < robot.numJoints(); ++i) {
     const Joint& joint = robot.joint(i);
     const SE3& frame = poses[static_cast<std::size_t>(joint.childLink)];

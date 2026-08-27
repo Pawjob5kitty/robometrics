@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
-<!-- joint2 nema <axis>. URDF spec by tise dosadila "1 0 0"; tenhle parser to
-     schvalne odmita, viz komentar u parseAxis v src/urdf.cpp. -->
+<!-- joint2 has no <axis>. The URDF spec would silently default it to "1 0 0";
+     this parser rejects it instead, see parseAxis in src/urdf.cpp. -->
 <robot name="missing_axis">
   <link name="base"/>
   <link name="link1"/>

@@ -1,18 +1,18 @@
 <?xml version="1.0"?>
-<!-- Rovinne rameno 4R: ctyri rovnobezne klouby kolem z, ramena 4 x 0.3.
+<!-- Planar 4R arm: four parallel z axes, links of 4 x 0.3.
 
-     TOHLE je fixture, ktera je vuci pathEfficiency skutecne redundantni,
-     a duvod stoji za precteni.
+     THIS is the fixture that is genuinely redundant with respect to
+     pathEfficiency, and the reason is worth reading.
 
-     Rovinne rameno ovlada z plneho twistu jen tri slozky: vx, vy, omega_z.
-     Zbyle tri jsou strukturalne nulove. Hodnost J proto nikdy neprekroci 3,
-     bez ohledu na pocet kloubu. Redundance znamena numDofs > rank(J), takze
-     na rovine je potreba ALESPON CTYRI klouby.
+     A planar arm drives only three of the six twist components: vx, vy,
+     omega_z. The other three are structurally zero, so rank(J) never exceeds 3
+     however many joints it has. Redundancy means numDofs > rank(J), so a
+     planar arm needs AT LEAST FOUR joints.
 
-     Trikloubove rameno (planar_3r) ma rank 3 pri 3 sloupcich, tedy nulovy
-     prostor dimenze 0 a jedine reseni -> efektivita vyjde presne 1 vzdy.
-     Ctyrkloubove ma nulovy prostor dimenze 1: existuje smer v prostoru
-     kloubu, po kterem se da hybat a tip se nehne vubec. -->
+     The three-joint arm (planar_3r) has rank 3 with 3 columns, so a null space
+     of dimension 0 and a unique solution, and efficiency is always exactly 1.
+     The four-joint arm has a null space of dimension 1: there is a direction in
+     joint space along which the joints move and the tip does not. -->
 <robot name="planar_4r">
   <link name="base"/>
   <link name="link1"/>

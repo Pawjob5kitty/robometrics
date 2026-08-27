@@ -1,18 +1,19 @@
 <?xml version="1.0"?>
-<!-- Fixed klouby na obou mistech, kde se lisi chovani:
+<!-- Fixed joints in both places where the behaviour differs:
 
        base  [joint1 revolute]>  link1  [mount_fixed]>  mount
              [joint2 revolute]>  link2  [tool_fixed]>   tool
 
-     (V XML komentari nesmi byt dve pomlcky za sebou, takze sipky jsou
-     zkracene. Neni to preklep.)
+     (An XML comment may not contain two consecutive hyphens, so the arrows
+     above are shortened. Not a typo.)
 
-     mount_fixed je UPROSTRED retezu: musi se slozit do originTransform
-     nasledujiciho pohybliveho kloubu (joint2 pak zacina na 0.2+0.3 = 0.5).
+     mount_fixed sits IN THE MIDDLE of the chain: it must fold into the
+     originTransform of the following movable joint, so joint2 starts at
+     0.2 + 0.3 = 0.5.
 
-     tool_fixed je na KONCI: zadny nasledujici pohyblivy kloub neexistuje,
-     takze skladani dopredu by ho zahodilo. Musi prezit jako Link::offset
-     linku 'tool'. Tenhle kloub je duvod, proc ma Link vlastni offset. -->
+     tool_fixed sits at the END: there is no following movable joint, so
+     folding forward would discard it. It has to survive as the Link::offset of
+     link 'tool'. This joint is the reason Link carries an offset of its own. -->
 <robot name="fixed_chain">
   <link name="base"/>
   <link name="link1"/>

@@ -1,16 +1,16 @@
 <?xml version="1.0"?>
-<!-- Rovinne rameno 3R: tri rovnobezne klouby kolem z, ramena 0.3 + 0.3 + 0.3.
+<!-- Planar 3R arm: three parallel z axes, links of 0.3 + 0.3 + 0.3.
 
-     POZOR, NENI redundantni vuci pathEfficiency. Rovinne rameno ovlada
-     z plneho twistu jen tri slozky (vx, vy, omega_z), zbyle tri jsou
-     strukturalne nulove, takze hodnost J je nejvys 3. Se tremi klouby je
-     rank(J) == 3 == pocet sloupcu, nulovy prostor ma dimenzi 0 a reseni
-     J*dq = dx je jedine. Efektivita proto vychazi presne 1 pro kazdou
-     trajektorii.
+     NOT redundant with respect to pathEfficiency. A planar arm drives only
+     three of the six twist components (vx, vy, omega_z); the other three are
+     structurally zero, so rank(J) never exceeds 3. With three joints,
+     rank(J) == 3 == the number of columns, the null space has dimension 0 and
+     J*dq = dx has a unique solution -- so efficiency comes out at exactly 1
+     for every trajectory.
 
-     Prave proto je tahle fixture uzitecna: je to nejcistsi ukazka toho, ze
-     metrika u neredundantniho robota nerika o politice vubec nic. Redundantni
-     protejsek je planar_4r. -->
+     That is what makes this fixture useful: it is the cleanest demonstration
+     that on a non-redundant robot the metric says nothing about the policy.
+     The redundant counterpart is planar_4r. -->
 <robot name="planar_3r">
   <link name="base"/>
   <link name="link1"/>

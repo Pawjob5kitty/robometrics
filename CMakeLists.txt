@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(
   robometrics
   VERSION 0.1.0
-  DESCRIPTION "Kinematicke metriky pro offline hodnoceni robotickych politik"
+  DESCRIPTION "Kinematic metrics for offline evaluation of robot policies"
   LANGUAGES CXX)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -24,11 +24,11 @@ if(NOT DEFINED CMAKE_EXPORT_COMPILE_COMMANDS)
 endif()
 
 # ---------------------------------------------------------------------------
-# Zavislosti
+# Dependencies
 # ---------------------------------------------------------------------------
 include(FetchContent)
 
-# Nechceme stavet testy/dokumentaci/benchmarky zavislosti.
+# We do not want to build the dependencies' own tests/docs/benchmarks.
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
@@ -55,7 +55,7 @@ FetchContent_Declare(
   GIT_TAG v2.5.3 # 2d0a9359a60c51affe2a9bebb1be1dca47868151
   GIT_SHALLOW TRUE)
 
-# rapidcheck nedela release ani tagy, takze pin je primo na commit.
+# rapidcheck cuts no releases and no tags, so the pin is a commit directly.
 FetchContent_Declare(
   rapidcheck
   GIT_REPOSITORY https://github.com/emil-e/rapidcheck.git
@@ -69,14 +69,15 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(eigen doctest rapidcheck pugixml)
 
-# Hlavicky zavislosti musi byt SYSTEM, jinak -Wconversion -Wshadow -Werror pada
-# na cizim kodu (Eigen/doctest/rapidcheck jsou template-heavy a warningy se
-# pripisuji nasi translacni jednotce). FetchContent umi klicove slovo SYSTEM az
-# od CMake 3.25; tohle funguje i na 3.20.
+# Dependency headers must be SYSTEM, otherwise -Wconversion -Wshadow -Werror
+# fires on third-party code (Eigen/doctest/rapidcheck are template-heavy and the
+# warnings are attributed to our translation unit). FetchContent gained the
+# SYSTEM keyword only
+# in CMake 3.25; this works on 3.20 too.
 function(robometrics_mark_system)
   foreach(tgt IN LISTS ARGN)
     if(NOT TARGET ${tgt})
-      message(FATAL_ERROR "robometrics: ocekavany cil '${tgt}' neexistuje")
+      message(FATAL_ERROR "robometrics: expected target '${tgt}' does not exist")
     endif()
     get_target_property(real ${tgt} ALIASED_TARGET)
     if(NOT real)
@@ -94,15 +95,15 @@ robometrics_mark_system(Eigen3::Eigen doctest::doctest rapidcheck
                         pugixml::pugixml)
 
 # ---------------------------------------------------------------------------
-# Spolecne prepinace prekladace
+# Common compiler switches
 # ---------------------------------------------------------------------------
-# Poznamka: warningy visi na INTERFACE cili, ktery linkujeme PRIVATE jen do
-# vlastnich cilu. Kdyby byly globalne pres add_compile_options, sestreli
+# Note: warnings hang on an INTERFACE target linked PRIVATE only into our own
+# targets. If they were global via add_compile_options they would take down
 # -Werror kazdou zavislost.
 add_library(robometrics_warnings INTERFACE)
 
 if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  # cl.exe nebo clang-cl: -W* prepinace neexistuji.
+  # cl.exe or clang-cl: the -W* switches do not exist.
   target_compile_options(robometrics_warnings INTERFACE /W4 /WX /permissive-)
 else()
   target_compile_options(
@@ -110,7 +111,7 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# Knihovna
+# Library
 # ---------------------------------------------------------------------------
 add_library(robometrics src/se3.cpp src/urdf.cpp src/kinematics.cpp src/jacobian.cpp
                         src/metrics.cpp src/rollout.cpp src/report.cpp src/cli.cpp)
@@ -129,15 +130,15 @@ target_link_libraries(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-# main() je zamerne trivialni; veskera logika je v runCli(), aby sla testovat
-# bez spousteni procesu. Viz include/robometrics/cli.hpp.
+# main() is deliberately trivial; all logic lives in runCli() so it can be
+# tested without spawning a process. See include/robometrics/cli.hpp.
 add_executable(robometrics_cli apps/main.cpp)
 set_target_properties(robometrics_cli PROPERTIES OUTPUT_NAME robometrics)
 target_link_libraries(robometrics_cli PRIVATE robometrics::robometrics
                                               robometrics_warnings)
 
 # ---------------------------------------------------------------------------
-# Testy
+# Tests
 # ---------------------------------------------------------------------------
 if(ROBOMETRICS_BUILD_TESTS)
   enable_testing()

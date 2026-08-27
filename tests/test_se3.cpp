@@ -4,8 +4,8 @@
 #include <doctest/doctest.h>
 #include <rapidcheck.h>
 
-// .cross() nežije v Eigen/Core, ale v Eigen/Geometry — bez tohohle includu
-// se soubor přeloží a spadne až při linkování na undefined reference.
+// .cross() lives in Eigen/Geometry, not Eigen/Core -- without this include the
+// file compiles and fails only at link time on an undefined reference.
 #include <Eigen/Geometry>
 #include <Eigen/LU>
 #include <algorithm>
@@ -24,21 +24,22 @@ using robometrics::SE3;
 using robometrics::Vec3;
 using robometrics::Vec6;
 
-/// Tolerance pro I1 podle zadání.
+/// Tolerance for I1, per the spec.
 constexpr double kTol = 1e-9;
 
-/// Volnější tolerance tam, kde se počítá obecná inverze 6x6. Chyba tam roste
-/// s číslem podmíněnosti, 1e-9 by bylo optimistické.
+/// Looser tolerance where a general 6x6 inverse is computed. The error there
+/// grows with the condition number; 1e-9 would be optimistic.
 constexpr double kTolLu = 1e-8;
 
-/// log(exp(x)) == x platí jen na hlavní větvi, tj. pro ||omega|| < pi. Držíme
-/// každou složku omega v <-1.8, 1.8>, takže ||omega|| <= 1.8*sqrt(3) = 3.117...
-/// což je pod pi. Meze na složkách stačí, není potřeba nic zahazovat.
+/// log(exp(x)) == x holds only on the principal branch, i.e. for ||omega|| < pi.
+/// We keep each omega component in [-1.8, 1.8], so ||omega|| <= 1.8*sqrt(3) =
+/// 3.117..., which is below pi. Bounds on the components suffice; nothing needs
+/// to be discarded.
 constexpr double kOmegaComp = 1.8;
 constexpr double kTransComp = 10.0;
 
-/// rapidcheck nemá generátor doublů s pevným rozsahem; postavíme ho z
-/// celočíselného, aby meze byly přesné a shrinking dával smysl.
+/// rapidcheck has no fixed-range double generator; we build one from an integer
+/// generator so the bounds are exact and shrinking makes sense.
 rc::Gen<double> genInRange(double lo, double hi) {
   constexpr int64_t kSteps = 1000000;
   return rc::gen::map(rc::gen::inRange<int64_t>(0, kSteps + 1), [lo, hi](int64_t k) {
@@ -46,8 +47,8 @@ rc::Gen<double> genInRange(double lo, double hi) {
   });
 }
 
-/// POZOR: volatelné jen zevnitř rapidcheck property, `operator*` na generátoru
-/// mimo běžící property vyhodí výjimku.
+/// CAUTION: callable only from inside a rapidcheck property; `operator*` on a
+/// generator outside a running property throws.
 Vec6 arbitraryTwist() {
   Vec6 x;
   for (int i = 0; i < 3; ++i) {
@@ -61,9 +62,10 @@ Vec6 arbitraryTwist() {
 
 double maxAbsDiff(const Vec6& a, const Vec6& b) { return (a - b).cwiseAbs().maxCoeff(); }
 
-/// Rozsah stejný jako translační složky twistu výše — žádný matematický
-/// důvod, jen recyklace existující meze, protože skew() nemá vlastní
-/// singularitu ani doménové omezení (je definovaná pro každé konečné w).
+/// The same range as the translational twist components above -- no
+/// mathematical reason, just reusing an existing bound, since skew() has no
+/// singularity or domain restriction of its own (it is defined for every finite
+/// w).
 Vec3 arbitraryVec3() {
   Vec3 v;
   for (int i = 0; i < 3; ++i) {
@@ -74,10 +76,10 @@ Vec3 arbitraryVec3() {
 
 }  // namespace
 
-TEST_CASE("sanity: doctest i rapidcheck jsou slinkované a běží") {
-  // Nemá to co dělat s SE(3). Kdyby tenhle test zmizel, zelená CI by
-  // znamenala jen to, že se nic nespustilo.
-  CHECK(rc::check("dvojité obrácení pořadí je identita", [](const std::vector<int>& v) {
+TEST_CASE("sanity: doctest and rapidcheck are linked and run") {
+  // Nothing to do with SE(3). If this test vanished, a green CI would only mean
+  // that nothing ran.
+  CHECK(rc::check("reversing twice is the identity", [](const std::vector<int>& v) {
     std::vector<int> w(v.rbegin(), v.rend());
     std::reverse(w.begin(), w.end());
     RC_ASSERT(w == v);
@@ -85,20 +87,20 @@ TEST_CASE("sanity: doctest i rapidcheck jsou slinkované a běží") {
 }
 
 TEST_CASE("I1: log(exp(x)) == x") {
-  CHECK(rc::check("log(exp(x)) == x pro ||omega|| < pi", [] {
+  CHECK(rc::check("log(exp(x)) == x for ||omega|| < pi", [] {
     const Vec6 x = arbitraryTwist();
     const Vec6 roundTrip = robometrics::log(robometrics::exp(x));
     RC_ASSERT(maxAbsDiff(roundTrip, x) < kTol);
   }));
 }
 
-TEST_CASE("exp(0) je identita") {
+TEST_CASE("exp(0) is the identity") {
   const Vec6 zero = Vec6::Zero();
   const SE3 T = robometrics::exp(zero);
   CHECK(T.isApprox(SE3::identity(), kTol));
 }
 
-TEST_CASE("exp(x) * exp(-x) je identita") {
+TEST_CASE("exp(x) * exp(-x) is the identity") {
   CHECK(rc::check("exp(x) * exp(-x) == I", [] {
     const Vec6 x = arbitraryTwist();
     const Vec6 negX = -x;
@@ -107,8 +109,8 @@ TEST_CASE("exp(x) * exp(-x) je identita") {
   }));
 }
 
-TEST_CASE("adjoint(T) je regulární") {
-  CHECK(rc::check("adjoint(exp(x)) je invertovatelná", [] {
+TEST_CASE("adjoint(T) is invertible") {
+  CHECK(rc::check("adjoint(exp(x)) is invertible", [] {
     const SE3 T = robometrics::exp(arbitraryTwist());
     const Mat6 a = robometrics::adjoint(T);
 
@@ -122,10 +124,10 @@ TEST_CASE("adjoint(T) je regulární") {
 }
 
 TEST_CASE("skew(a) * b == a.cross(b)") {
-  // Tohle NENÍ jen jeden z mnoha invariantů — je to DEFINICE skew(). Pokud
-  // tenhle test padá, je špatně buď znaménko, nebo pořadí indexů v matici;
-  // nic jiného se tu rozbít nedá, protože skew() žádnou jinou logiku nemá.
-  CHECK(rc::check("skew(a) * b odpovídá cross productu", [] {
+  // This is NOT one invariant among many -- it is the DEFINITION of skew(). If
+  // this test fails, either the sign or the index order in the matrix is wrong;
+  // nothing else can break here, because skew() has no other logic.
+  CHECK(rc::check("skew(a) * b matches the cross product", [] {
     const Vec3 a = arbitraryVec3();
     const Vec3 b = arbitraryVec3();
     const Vec3 lhs = robometrics::skew(a) * b;
@@ -134,11 +136,11 @@ TEST_CASE("skew(a) * b == a.cross(b)") {
   }));
 }
 
-TEST_CASE("skew(w) je antisymetrická") {
-  // Antisymetrie je algebraický důsledek antikomutativity cross productu.
-  // Chytí konkrétně chyby, které test výše nemusí odhalit na první pokus —
-  // třeba prohozený řádek/sloupec, kde by se náhoda ve znaménkách "srovnala"
-  // pro některé konkrétní a, b, ale porušila by symetrii matice jako celku.
+TEST_CASE("skew(w) is antisymmetric") {
+  // Antisymmetry is an algebraic consequence of the cross product being
+  // anticommutative. It catches errors the test above may not on the first try
+  // -- a swapped row/column where the signs happen to "line up" for some
+  // specific a, b, but break the symmetry of the matrix as a whole.
   CHECK(rc::check("skew(w) + skew(w)^T == 0", [] {
     const Vec3 w = arbitraryVec3();
     const Mat3 s = robometrics::skew(w);
@@ -148,10 +150,10 @@ TEST_CASE("skew(w) je antisymetrická") {
 }
 
 TEST_CASE("skew(w) * w == 0") {
-  // w je vlastní vektor skew(w) s vlastním číslem 0 — speciální případ
-  // w×w == 0. Chytí chybu, kdy je matice antisymetrická "náhodou" (např.
-  // permutací indexů, která zachová S^T == -S), ale mimodiagonální prvky
-  // neodpovídají skutečnému cross productu.
+  // w is an eigenvector of skew(w) with eigenvalue 0 -- a special case of
+  // w x w == 0. Catches the case where the matrix is antisymmetric "by
+  // accident" (e.g. an index permutation preserving S^T == -S) but the
+  // off-diagonal entries do not match the real cross product.
   CHECK(rc::check("skew(w) * w == 0", [] {
     const Vec3 w = arbitraryVec3();
     const Vec3 result = robometrics::skew(w) * w;
@@ -159,11 +161,10 @@ TEST_CASE("skew(w) * w == 0") {
   }));
 }
 
-TEST_CASE("skew je lineární: skew(a + b) == skew(a) + skew(b)") {
-  // skew() je uzavřený vzorec lineární ve složkách w, takže linearita by
-  // měla platit triviálně — test je tu hlavně proti implementacím, co by
-  // se snažily být chytré (větvení na speciální případy, normalizace) a
-  // linearitu tiše porušily.
+TEST_CASE("skew is linear: skew(a + b) == skew(a) + skew(b)") {
+  // skew() is a closed form linear in the components of w, so linearity should
+  // hold trivially -- the test is mainly against implementations that try to be
+  // clever (branching on special cases, normalising) and quietly break it.
   CHECK(rc::check("skew(a + b) == skew(a) + skew(b)", [] {
     const Vec3 a = arbitraryVec3();
     const Vec3 b = arbitraryVec3();
@@ -173,13 +174,13 @@ TEST_CASE("skew je lineární: skew(a + b) == skew(a) + skew(b)") {
   }));
 }
 
-TEST_CASE("identity je jednotkova transformace") {
+TEST_CASE("identity is the unit transform") {
   const SE3 I = SE3::identity();
   CHECK(I.rotation().isApprox(Mat3::Identity()));
   CHECK(I.translation().isZero());
 }
 
-TEST_CASE("matrix() sklada R a t do 4x4") {
+TEST_CASE("matrix() assembles R and t into a 4x4") {
   const Mat3 R = Mat3::Identity();
   const Vec3 t(1.0, 2.0, 3.0);
   const SE3 T(R, t);
@@ -196,7 +197,7 @@ TEST_CASE("matrix() sklada R a t do 4x4") {
   CHECK(M(3, 3) == 1.0);
 }
 
-TEST_CASE("konstruktor z Mat4 je inverzni k matrix()") {
+TEST_CASE("the Mat4 constructor is inverse to matrix()") {
   const Mat3 R = Mat3::Identity();
   const Vec3 t(1.0, 2.0, 3.0);
   const SE3 orig(R, t);
@@ -208,7 +209,7 @@ TEST_CASE("konstruktor z Mat4 je inverzni k matrix()") {
   CHECK(back.translation().isApprox(t));
 }
 
-TEST_CASE("act aplikuje rotaci a pak translaci") {
+TEST_CASE("act applies the rotation then the translation") {
   const Vec3 t(1.0, 2.0, 3.0);
   const SE3 T(Mat3::Identity(), t);
   const Vec3 p(10.0, 0.0, 0.0);
@@ -219,7 +220,7 @@ TEST_CASE("act aplikuje rotaci a pak translaci") {
   CHECK(result.isApprox(expected));
 }
 
-TEST_CASE("skladani transformaci") {
+TEST_CASE("composing transforms") {
   const SE3 A(Mat3::Identity(), Vec3(1.0, 0.0, 0.0));
   const SE3 B(Mat3::Identity(), Vec3(0.0, 2.0, 0.0));
   const SE3 C = A * B;
@@ -228,7 +229,7 @@ TEST_CASE("skladani transformaci") {
   CHECK(C.act(p).isApprox(A.act(B.act(p))));
 }
 
-TEST_CASE("rodrigues odpovida Eigen AngleAxis") {
+TEST_CASE("rodrigues matches Eigen AngleAxis") {
   const Vec3 axis = Vec3(1.0, 2.0, 3.0).normalized();
   const double theta = 0.7;
   const Vec3 w = axis * theta;
@@ -237,24 +238,24 @@ TEST_CASE("rodrigues odpovida Eigen AngleAxis") {
   CHECK(rodrigues(w).isApprox(aa.toRotationMatrix(), 1e-12));
 }
 
-TEST_CASE("rodrigues pro nulovy vektor vraci identitu") {
+TEST_CASE("rodrigues of the zero vector returns the identity") {
   const Mat3 R = robometrics::rodrigues(Vec3::Zero());
-  CHECK(R.allFinite());  // zadne NaN
+  CHECK(R.allFinite());  // no NaN
   CHECK(R.isApprox(Mat3::Identity(), 1e-12));
 }
 
-TEST_CASE("rodrigues pro velmi male theta je stabilni") {
+TEST_CASE("rodrigues is stable for very small theta") {
   const Vec3 w(1e-9, 0.0, 0.0);
   const Mat3 R = robometrics::rodrigues(w);
   CHECK(R.allFinite());
   CHECK(R.isApprox(Mat3::Identity(), 1e-8));
 }
 
-TEST_CASE("vychozi konstruktor je identita") {
+TEST_CASE("the default constructor is the identity") {
   const SE3 T;
   CHECK(T.isApprox(SE3::identity(), 1e-12));
 }
-TEST_CASE("adjoint identity je jednotkova matice") {
+TEST_CASE("adjoint of identity is the identity matrix") {
   const Mat6 A = robometrics::adjoint(SE3::identity());
   CHECK(A.isApprox(Mat6::Identity(), 1e-12));
 }

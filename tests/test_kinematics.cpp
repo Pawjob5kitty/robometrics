@@ -1,8 +1,8 @@
-// Testy forward kinematics.
+// Tests for forward kinematics.
 //
-// Struktura je zamerne stejna jako u SE(3): nejdriv pripady s rucne spocitanym
-// vysledkem (ty rikaji, jestli je vzorec spravne), pak invarianty (ty chyti
-// regrese, na ktere konkretni cisla nestaci).
+// The structure mirrors the SE(3) tests: first hand-computed cases (which say
+// whether the formula is right), then invariants (which catch regressions that
+// specific numbers would miss).
 
 #include <doctest/doctest.h>
 
@@ -23,9 +23,9 @@ using robometrics::Robot;
 using robometrics::SE3;
 using robometrics::Vec3;
 
-/// Volnejsi nez kDefaultTol, ze stejneho duvodu jako v test_urdf.cpp: rotace
-/// jdou pres rodrigues(), takze cos(pi/2) vyjde 6.1e-17 misto nuly. Rad chyby
-/// je 1e-16, takze 1e-12 ma ctyri rady rezervy.
+/// Looser than kDefaultTol, for the same reason as in test_urdf.cpp: rotations
+/// go through rodrigues(), so cos(pi/2) comes out at 6.1e-17 instead of zero.
+/// The error is of order 1e-16, so 1e-12 has four orders of headroom.
 constexpr double kTol = 1e-12;
 
 const double kHalfPi = std::acos(0.0);
@@ -42,19 +42,19 @@ Eigen::VectorXd zeros(int n) { return Eigen::VectorXd::Zero(n); }
 // q = 0
 // ---------------------------------------------------------------------------
 
-TEST_CASE("pri q = 0 je vysledek slozeni samych originTransform") {
-  // Pri nulove konfiguraci je motion(0) identita, takze z jointTransform
-  // zbyde holy originTransform. Vysledek proto MUSI byt jejich soucin podel
-  // retezu — a to se da spocitat nezavisle, bez FK.
+TEST_CASE("at q = 0 the result is the composition of the originTransforms") {
+  // At zero configuration motion(0) is identity, so jointTransform leaves just
+  // the bare originTransform. The result MUST therefore be their product along
+  // the chain -- which can be computed independently, without FK.
   //
-  // Kdyby se nekde pletlo poradi nasobeni (local * parent misto
-  // parent * local), tenhle test to chyti u prvniho kloubu s nenulovym
-  // originem, protoze translace se skladaji pres rotaci rodice.
+  // If the product order were confused anywhere (local * parent instead of
+  // parent * local), this test catches it at the first joint with a nonzero
+  // origin, because translations compose through the parent's rotation.
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
   const SE3 actual = forwardKinematics(robot, zeros(robot.numDofs()));
 
-  // Rucne: joint1 (0,0,0.1) * joint2 (0.5,0,0) * tool offset (0,0,0.05).
-  // Vsechny rotace jsou identita, takze se translace jen sectou.
+  // By hand: joint1 (0,0,0.1) * joint2 (0.5,0,0) * tool offset (0,0,0.05).
+  // All rotations are identity, so the translations simply add up.
   SE3 expected = SE3::identity();
   for (int i = 0; i < robot.numJoints(); ++i) {
     expected = expected * robot.joint(i).originTransform;
@@ -66,16 +66,16 @@ TEST_CASE("pri q = 0 je vysledek slozeni samych originTransform") {
   CHECK(actual.rotation().isApprox(Mat3::Identity()));
 }
 
-TEST_CASE("pri q = 0 je koren v identite") {
+TEST_CASE("at q = 0 the root is at identity") {
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
   const std::vector<SE3> all = forwardKinematicsAll(robot, zeros(robot.numDofs()));
   CHECK(all[static_cast<std::size_t>(robot.rootLinkIndex())].isApprox(SE3::identity(), kTol));
 }
 
-TEST_CASE("koren je v identite pro libovolne q") {
-  // Silnejsi tvrzeni nez predchozi test: koren se nesmi hnout ani kdyz se
-  // klouby hybaji. Kdyby FK omylem aplikovala prvni kloub i na bazi, tohle
-  // spadne, zatimco test s q = 0 by prosel.
+TEST_CASE("the root is at identity for any q") {
+  // A stronger claim than the previous test: the root must not move even when
+  // the joints do. If FK accidentally applied the first joint to the base too,
+  // this fails, while the q = 0 test would pass.
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
   Eigen::VectorXd q(2);
   q << 0.7, -1.3;
@@ -84,25 +84,26 @@ TEST_CASE("koren je v identite pro libovolne q") {
 }
 
 // ---------------------------------------------------------------------------
-// Jednokloubovy robot proti rucnimu vypoctu
+// Single-joint robot against a hand computation
 // ---------------------------------------------------------------------------
 
-TEST_CASE("jeden kloub, rotace kolem z o pi/2") {
-  // Rucni vypocet. Kloub sedi v (0, 0, 0.1) a otaci se kolem z. Za nim je
-  // fixed rameno (0.5, 0, 0) k linku 'tip'.
+TEST_CASE("one joint, rotation about z by pi/2") {
+  // By hand. The joint sits at (0, 0, 0.1) and rotates about z. Beyond it is a
+  // fixed 0.5 arm (0.5, 0, 0) to link 'tip'.
   //
   //   q = 0:      tip = (0.5, 0, 0.1),  R = I
   //
-  //   q = pi/2:   rotace kolem z posle x na y, tedy rameno (0.5, 0, 0) se
-  //               zobrazi na (0, 0.5, 0). Pricteme vysku kloubu:
+  //   q = pi/2:   rotation about z sends x to y, so the arm (0.5, 0, 0) maps to
+  //               (0, 0.5, 0). Add the joint height:
   //               tip = (0, 0.5, 0.1)
   //
   //               R = Rz(pi/2) = | 0  -1   0 |
   //                              | 1   0   0 |
   //                              | 0   0   1 |
   //
-  // Vyska 0.1 se NESMI otocit — kloub je nad bazi, ne za rotaci. Kdyby se
-  // poradi nasobeni prohodilo, vyslo by tipu z = 0 a y = 0.6 nebo podobne.
+  // The height 0.1 must NOT rotate -- the joint is above the base, not behind
+  // the rotation. With the product order swapped the tip would come out at
+  // z = 0 and y = 0.6 or similar.
   const Robot robot = Robot::fromUrdfFile(fixture("single_joint.urdf"));
   REQUIRE(robot.numDofs() == 1);
 
@@ -126,10 +127,10 @@ TEST_CASE("jeden kloub, rotace kolem z o pi/2") {
   CHECK((atQuarter.rotation() - expectedR).cwiseAbs().maxCoeff() < kTol);
 }
 
-TEST_CASE("rotace o pi vrati rameno na opacnou stranu") {
-  // Druhy rucni pripad, uz bez matice: pri q = pi musi byt rameno presne
-  // zrcadlene kolem osy. Chyti chybu ve znamenku uhlu, kterou by pi/2
-  // teoreticky mohlo minout, kdyby se osa otocila zaroven se znamenkem.
+TEST_CASE("rotation by pi puts the arm on the opposite side") {
+  // A second hand case, now without the matrix: at q = pi the arm must be
+  // exactly mirrored about the axis. Catches a sign error in the angle that
+  // pi/2 could in principle miss, if the axis flipped along with the sign.
   const Robot robot = Robot::fromUrdfFile(fixture("single_joint.urdf"));
   Eigen::VectorXd q(1);
   q << 2.0 * kHalfPi;
@@ -137,45 +138,46 @@ TEST_CASE("rotace o pi vrati rameno na opacnou stranu") {
   CHECK((T.translation() - Vec3(-0.5, 0.0, 0.1)).cwiseAbs().maxCoeff() < kTol);
 }
 
-TEST_CASE("znamenko uhlu odpovida pravidlu prave ruky") {
-  // Kladne q kolem z musi poslat rameno ze smeru +x do +y, ne do -y. Tohle je
-  // jediny test, ktery rozlisi rodrigues(w) od rodrigues(-w) — vsechny
-  // invarianty nize plati pro obe.
+TEST_CASE("the sign of the angle follows the right-hand rule") {
+  // A positive q about z must send the arm from +x toward +y, not -y. This is
+  // the only test that distinguishes rodrigues(w) from rodrigues(-w) -- every
+  // invariant below holds for both.
   const Robot robot = Robot::fromUrdfFile(fixture("single_joint.urdf"));
   Eigen::VectorXd q(1);
   q << 0.3;
   const SE3 T = forwardKinematics(robot, q);
   CHECK(T.translation().y() > 0.0);
-  CHECK(T.translation().x() > 0.0);  // porad blize k +x nez k +y
+  CHECK(T.translation().x() > 0.0);  // still closer to +x than to +y
 }
 
 // ---------------------------------------------------------------------------
-// Dvoukloubovy retez pri nenulovem q — poradi nasobeni
+// Two-joint chain at nonzero q -- product order
 // ---------------------------------------------------------------------------
 //
-// Tahle sekce vznikla az po mutacnim testu. Puvodni testy NECHYTILY dve
-// zakladni zamenyv poradi:
+// This section was added after a mutation check. The original tests did NOT
+// catch two basic order swaps:
 //
-//   (1) motion * originTransform misto originTransform * motion
-//   (2) local * parent misto parent * local pri skladani retezu
+//   (1) motion * originTransform instead of originTransform * motion
+//   (2) local * parent instead of parent * local when composing the chain
 //
-// Duvod byl pokazde ten samy: jediny test s absolutni polohou pri nenulovem q
-// byl jednokloubovy robot s osou z a originem (0, 0, 0.1). Rotace kolem z
-// necha vektor (0, 0, 0.1) na miste, takze obe zamenenne verze daly totez.
-// Zbyle testy pri nenulovem q byly bud relativni (vzajemna poloha dvou linku),
-// nebo self-consistentni (obe strany prosly stejnou zamenou).
+// The reason was the same each time: the only test with an absolute pose at
+// nonzero q was the single-joint robot with a z axis and origin (0, 0, 0.1).
+// Rotation about z leaves the vector (0, 0, 0.1) in place, so both swapped
+// versions gave the same thing. The remaining nonzero-q tests were either
+// relative (the mutual pose of two links) or self-consistent (both sides went
+// through the same swap).
 //
-// Poucenie do budoucna: pri overovani poradi nasobeni musi mit testovaci
-// pripad translaci, ktera NENI rovnobezna s osou otaceni. Jinak transformace
-// komutuji a test nerozlisi nic.
+// Lesson for the future: when verifying product order, the test case must have
+// a translation NOT parallel to the axis of rotation. Otherwise the transforms
+// commute and the test distinguishes nothing.
 
-TEST_CASE("dva klouby pri nenulovem q, rucne spocitane") {
+TEST_CASE("two joints at nonzero q, computed by hand") {
   // two_joint.urdf:
-  //   joint1: origin (0, 0, 0.1), osa z
-  //   joint2: origin (0.3, 0, 0), osa y      <- translace kolma na osu z
-  //   tip = link2, bez fixed offsetu
+  //   joint1: origin (0, 0, 0.1), axis z
+  //   joint2: origin (0.3, 0, 0), axis y      <- translation perpendicular to z
+  //   tip = link2, no fixed offset
   //
-  // Pripad q = (0, pi/2). Rucne:
+  // Case q = (0, pi/2). By hand:
   //
   //   local1 = trans(0,0,0.1) * Rz(0)     = SE3(I,  (0, 0, 0.1))
   //   local2 = trans(0.3,0,0) * Ry(pi/2)  = SE3(Ry, (0.3, 0, 0))
@@ -183,11 +185,11 @@ TEST_CASE("dva klouby pri nenulovem q, rucne spocitane") {
   //   X2 = local1 * local2 = SE3(Ry, I*(0.3,0,0) + (0,0,0.1))
   //                        = SE3(Ry, (0.3, 0, 0.1))
   //
-  // Kdyby se motion aplikovalo zleva (chyba 1), byl by local2 roven
-  // SE3(Ry, Ry*(0.3,0,0)) = SE3(Ry, (0, 0, -0.3)) a tip by skoncil
-  // v (0, 0, -0.2).
+  // If motion were applied on the left (error 1), local2 would equal
+  // SE3(Ry, Ry*(0.3,0,0)) = SE3(Ry, (0, 0, -0.3)) and the tip would land at
+  // (0, 0, -0.2).
   //
-  // Kdyby se retez skladal obracene (chyba 2), vyslo by
+  // If the chain composed backwards (error 2), the result would be
   // local2 * local1 = SE3(Ry, Ry*(0,0,0.1) + (0.3,0,0)) = SE3(Ry, (0.4, 0, 0)).
   const Robot robot = Robot::fromUrdfFile(fixture("two_joint.urdf"));
   REQUIRE(robot.numDofs() == 2);
@@ -206,31 +208,31 @@ TEST_CASE("dva klouby pri nenulovem q, rucne spocitane") {
   // clang-format on
   CHECK((T.rotation() - expectedR).cwiseAbs().maxCoeff() < kTol);
 
-  // A explicitne, ze to nejsou ty dve chybne varianty — kdyby nekdo poradi
-  // prohodil, tenhle radek pojmenuje, co se stalo.
+  // And explicitly that it is not the two wrong variants -- if someone swaps the
+  // order, this line names what happened.
   CHECK((T.translation() - Vec3(0.0, 0.0, -0.2)).cwiseAbs().maxCoeff() > 0.1);
   CHECK((T.translation() - Vec3(0.4, 0.0, 0.0)).cwiseAbs().maxCoeff() > 0.1);
 }
 
-TEST_CASE("dva klouby, oba nenulove, rucne spocitane") {
-  // Obecny pripad q = (pi/2, pi/2), kde nic nekomutuje.
+TEST_CASE("two joints, both nonzero, computed by hand") {
+  // The general case q = (pi/2, pi/2), where nothing commutes.
   //
   //   local1 = trans(0,0,0.1) * Rz(pi/2) = SE3(Rz, (0, 0, 0.1))
   //   local2 = trans(0.3,0,0) * Ry(pi/2) = SE3(Ry, (0.3, 0, 0))
   //
-  //   translace: R1 * t2 + t1 = Rz(pi/2)*(0.3,0,0) + (0,0,0.1)
-  //                           = (0, 0.3, 0) + (0, 0, 0.1)
-  //                           = (0, 0.3, 0.1)
+  //   translation: R1 * t2 + t1 = Rz(pi/2)*(0.3,0,0) + (0,0,0.1)
+  //                             = (0, 0.3, 0) + (0, 0, 0.1)
+  //                             = (0, 0.3, 0.1)
   //
-  //   rotace:    Rz(pi/2) * Ry(pi/2)
+  //   rotation:    Rz(pi/2) * Ry(pi/2)
   //     Rz = |0 -1  0|      Ry = | 0  0  1|
   //          |1  0  0|           | 0  1  0|
   //          |0  0  1|           |-1  0  0|
   //
-  //     radek 0 Rz = (0,-1,0) krat sloupce Ry (0,0,-1),(0,1,0),(1,0,0)
-  //                                        -> ( 0, -1,  0)
-  //     radek 1 Rz = (1, 0,0)              -> ( 0,  0,  1)
-  //     radek 2 Rz = (0, 0,1)              -> (-1,  0,  0)
+  //     row 0 Rz = (0,-1,0) times cols of Ry (0,0,-1),(0,1,0),(1,0,0)
+  //                                      -> ( 0, -1,  0)
+  //     row 1 Rz = (1, 0,0)              -> ( 0,  0,  1)
+  //     row 2 Rz = (0, 0,1)              -> (-1,  0,  0)
   const Robot robot = Robot::fromUrdfFile(fixture("two_joint.urdf"));
 
   Eigen::VectorXd q(2);
@@ -248,17 +250,18 @@ TEST_CASE("dva klouby, oba nenulove, rucne spocitane") {
   CHECK((T.rotation() - expectedR).cwiseAbs().maxCoeff() < kTol);
 }
 
-TEST_CASE("jointTransform aplikuje motion zprava, ne zleva") {
-  // Nejmensi mozny test toho jednoho rozhodnuti, izolovane od zbytku FK.
-  // Osa je z, translace originu je podel x — tedy KOLMO na osu, jinak by obe
-  // varianty komutovaly a test by nerozlisil nic.
+TEST_CASE("jointTransform applies motion from the right, not the left") {
+  // The smallest possible test of that one decision, isolated from the rest of
+  // FK. The axis is z and the origin's translation is along x -- PERPENDICULAR
+  // to the axis, otherwise both variants would commute and the test would
+  // distinguish nothing.
   //
-  //   origin = trans(0.2, 0, 0),  osa z,  q = pi/2
+  //   origin = trans(0.2, 0, 0),  axis z,  q = pi/2
   //
-  //   spravne  origin * motion = SE3(Rz, (0.2, 0, 0))
-  //            translace se neotoci, protoze rotace prijde az za ni
+  //   correct  origin * motion = SE3(Rz, (0.2, 0, 0))
+  //            the translation does not rotate, because the rotation comes after
   //
-  //   spatne   motion * origin = SE3(Rz, Rz*(0.2,0,0)) = SE3(Rz, (0, 0.2, 0))
+  //   wrong    motion * origin = SE3(Rz, Rz*(0.2,0,0)) = SE3(Rz, (0, 0.2, 0))
   const std::string xml =
       "<robot name=\"r\">"
       "  <link name=\"base\"/><link name=\"a\"/>"
@@ -275,13 +278,13 @@ TEST_CASE("jointTransform aplikuje motion zprava, ne zleva") {
 }
 
 // ---------------------------------------------------------------------------
-// Vztah forwardKinematics a forwardKinematicsAll
+// Relationship of forwardKinematics and forwardKinematicsAll
 // ---------------------------------------------------------------------------
 
-TEST_CASE("forwardKinematicsAll na indexu tipu se rovna forwardKinematics") {
-  // Indexovat pres tipLinkIndex(), ne pres .back(): u stromu s chapadlem je
-  // posledni link v poli nahodny prst, ne end-effector. Poradi linku je vec
-  // topologickeho pruchodu, tip je vec zadani.
+TEST_CASE("forwardKinematicsAll at the tip index equals forwardKinematics") {
+  // Index through tipLinkIndex(), not .back(): on a tree with a gripper the last
+  // link in the array is a random finger, not the end-effector. Link order is a
+  // matter of the traversal; the tip is a matter of the request.
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
 
   Eigen::VectorXd q(2);
@@ -294,30 +297,30 @@ TEST_CASE("forwardKinematicsAll na indexu tipu se rovna forwardKinematics") {
   CHECK(all[static_cast<std::size_t>(robot.tipLinkIndex())].isApprox(tip, kTol));
 }
 
-TEST_CASE("ramec kloubu je poloha jeho child linku") {
-  // Most k Jacobianu: ten iteruje pres klouby, ne pres linky. Tady se overuje,
-  // ze prevod mezi tim je opravdu jen indexace pres childLink, jak to slibuje
-  // dokumentace v kinematics.hpp.
+TEST_CASE("a joint frame is the pose of its child link") {
+  // The bridge to the Jacobian: it iterates over joints, not links. This checks
+  // that the conversion between them really is just indexing through childLink,
+  // as kinematics.hpp promises.
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
 
   Eigen::VectorXd q(2);
   q << 0.2, 0.5;
   const std::vector<SE3> all = forwardKinematicsAll(robot, q);
 
-  // Slozime polohu prvniho kloubu rucne a porovname s polohou jeho child linku.
+  // Build the first joint's pose by hand and compare with its child link's pose.
   const robometrics::Joint& j0 = robot.joint(0);
   const SE3 expected = robometrics::jointTransform(j0, q(j0.dofIndex));
   CHECK(all[static_cast<std::size_t>(j0.childLink)].isApprox(expected, kTol));
 }
 
 // ---------------------------------------------------------------------------
-// Fixed klouby v FK
+// Fixed joints in FK
 // ---------------------------------------------------------------------------
 
-TEST_CASE("koncovy fixed kloub se projevi v poloze tipu") {
-  // Parser ho ulozi jako Link::offset; tenhle test overuje, ze ho FK skutecne
-  // pouzije. Bez nej by tip skoncil na linku 'link2', tedy o 0.05 niz —
-  // presne ta chyba, kvuli ktere ma Link vlastni offset.
+TEST_CASE("a trailing fixed joint shows up in the tip pose") {
+  // The parser stores it as Link::offset; this test checks FK actually uses it.
+  // Without it the tip would end up at link 'link2', 0.05 lower -- exactly the
+  // error that Link's own offset exists to prevent.
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
 
   Eigen::VectorXd q(2);
@@ -327,16 +330,16 @@ TEST_CASE("koncovy fixed kloub se projevi v poloze tipu") {
   const SE3 link2 = all[static_cast<std::size_t>(robot.findLink("link2"))];
   const SE3 tool = all[static_cast<std::size_t>(robot.findLink("tool"))];
 
-  // Rozdil mezi nimi je presne fixed origin 0.05 podel z linku link2.
+  // The difference between them is exactly the fixed origin 0.05 along z of link2.
   const SE3 relative = link2.inverse() * tool;
   CHECK(relative.translation().isApprox(Vec3(0.0, 0.0, 0.05)));
   CHECK(relative.rotation().isApprox(Mat3::Identity()));
 }
 
-TEST_CASE("fixed offset je tuhy vuci svemu kloubu pro libovolne q") {
-  // Silnejsi verze predchoziho: vzajemna poloha link2 a tool nesmi na q
-  // zaviset vubec. Kdyby se fixed offset omylem aplikoval na spatne strane
-  // nasobeni, pri q = 0 by to porad vychazelo a tady uz ne.
+TEST_CASE("a fixed offset is rigid relative to its joint for any q") {
+  // A stronger version of the previous: the mutual pose of link2 and tool must
+  // not depend on q at all. If the fixed offset were applied on the wrong side
+  // of the product, q = 0 would still come out right and this would not.
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
 
   Eigen::VectorXd q(2);
@@ -349,23 +352,23 @@ TEST_CASE("fixed offset je tuhy vuci svemu kloubu pro libovolne q") {
 }
 
 // ---------------------------------------------------------------------------
-// Prismatic a mimic klouby
+// Prismatic and mimic joints
 // ---------------------------------------------------------------------------
 
-TEST_CASE("prismatic kloub posouva, mimic kloub jde proti nemu") {
-  // Rucni vypocet pro chapadlo:
+TEST_CASE("a prismatic joint translates, the mimic moves against it") {
+  // Hand computation for the gripper:
   //
-  //   arm q = 0        => hand v (0, 0, 0.4)
-  //   finger_left q = 0.03, origin (0, 0.02, 0.05), osa y
+  //   arm q = 0        => hand at (0, 0, 0.4)
+  //   finger_left q = 0.03, origin (0, 0.02, 0.05), axis y
   //                    => left  = (0, 0.4) + (0, 0.02, 0.05) + (0, 0.03, 0)
   //                             = (0, 0.05, 0.45)
-  //   finger_right mimic, multiplier -1 => hodnota -0.03
-  //                       origin (0, -0.02, 0.05), osa y
-  //                    => right = (0, -0.02, 0.05) + (0, -0.03, 0) posunute
+  //   finger_right mimic, multiplier -1 => value -0.03
+  //                       origin (0, -0.02, 0.05), axis y
+  //                    => right = (0, -0.02, 0.05) + (0, -0.03, 0), offset
   //                             = (0, -0.05, 0.45)
   //
-  // Prsty tedy vyjdou symetricky kolem osy. Kdyby se multiplier ignoroval,
-  // right by skoncil v (0, 0.01, 0.45) a symetrie by zmizela.
+  // The fingers come out symmetric about the axis. If the multiplier were
+  // ignored, right would end at (0, 0.01, 0.45) and the symmetry would vanish.
   const Robot robot = Robot::fromUrdfFile(fixture("mimic_gripper.urdf"), "hand");
   REQUIRE(robot.numDofs() == 2);
   REQUIRE(robot.numJoints() == 3);
@@ -380,13 +383,13 @@ TEST_CASE("prismatic kloub posouva, mimic kloub jde proti nemu") {
   CHECK((left - Vec3(0.0, 0.05, 0.45)).cwiseAbs().maxCoeff() < kTol);
   CHECK((right - Vec3(0.0, -0.05, 0.45)).cwiseAbs().maxCoeff() < kTol);
 
-  // Symetrie zvlast, protoze rika presne to, co ma mimic multiplier znamenat.
+  // Symmetry checked separately, because it says exactly what the mimic multiplier means.
   CHECK(left.y() == doctest::Approx(-right.y()));
 }
 
-TEST_CASE("mimic offset se aplikuje") {
-  // multiplier sam o sobe by prosel i kdyby se offset zahazoval, protoze ve
-  // fixture je nulovy. Tenhle pripad ho ma nenulovy.
+TEST_CASE("the mimic offset is applied") {
+  // The multiplier alone would pass even if the offset were discarded, because
+  // it is zero in the fixture. This case has it nonzero.
   const std::string xml =
       "<robot name=\"r\">"
       "  <link name=\"base\"/><link name=\"a\"/><link name=\"b\"/>"
@@ -405,15 +408,15 @@ TEST_CASE("mimic offset se aplikuje") {
   q << 0.1;
   // driver   = 0.1
   // follower = 2 * 0.1 + 0.5 = 0.7
-  // celkem podel x: 0.1 + 0.7 = 0.8
+  // total along x: 0.1 + 0.7 = 0.8
   const SE3 tip = forwardKinematics(robot, q);
   CHECK(tip.translation().x() == doctest::Approx(0.8));
 }
 
-TEST_CASE("mimic kloub se hybe i kdyz je jeho q nulove") {
-  // Dusledek nenuloveho offsetu: pri q = 0 neni follower v nule, ale v 0.5.
-  // Test existuje proto, ze "vsechno v nule" je nejcastejsi predpoklad, ktery
-  // u mimic kloubu s offsetem neplati.
+TEST_CASE("a mimic joint moves even when its q is zero") {
+  // A consequence of a nonzero offset: at q = 0 the follower is not at zero but
+  // at 0.5. The test exists because "everything at zero" is the most common
+  // assumption, and it does not hold for a mimic joint with an offset.
   const std::string xml =
       "<robot name=\"r\">"
       "  <link name=\"base\"/><link name=\"a\"/><link name=\"b\"/>"
@@ -431,13 +434,13 @@ TEST_CASE("mimic kloub se hybe i kdyz je jeho q nulove") {
 }
 
 // ---------------------------------------------------------------------------
-// Invarianty
+// Invariants
 // ---------------------------------------------------------------------------
 
-TEST_CASE("kazda vysledna poloha je platna transformace SE(3)") {
-  // Strukturalni kontrola. Chyti chyby, ktere konkretni cisla minou — treba
-  // kdyby se nekam vloudilo meritko nebo zrcadleni; vysledek by pak porad
-  // "nekde byl", jen by to nebyla tuha transformace.
+TEST_CASE("every resulting pose is a valid SE(3) transform") {
+  // A structural check. Catches errors the specific numbers would miss -- for
+  // instance a stray scale or reflection; the result would still be "somewhere",
+  // just not a rigid transform.
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
 
   Eigen::VectorXd q(2);
@@ -448,10 +451,10 @@ TEST_CASE("kazda vysledna poloha je platna transformace SE(3)") {
   }
 }
 
-TEST_CASE("otoceni jednoho kloubu tam a zpet vrati puvodni polohu") {
-  // Rika, ze FK je funkce q a nic si nepamatuje mezi volanimi. Trivialne
-  // splneno pro cistou funkci — presne proto je to dobry test na to, jestli
-  // se nekam nedostal stav (cache, static, mutovany Robot).
+TEST_CASE("turning one joint out and back returns the original pose") {
+  // Says FK is a function of q and remembers nothing between calls. Trivially
+  // true for a pure function -- which is exactly why it is a good test for
+  // whether state crept in (a cache, a static, a mutated Robot).
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
 
   Eigen::VectorXd a(2);
@@ -465,10 +468,10 @@ TEST_CASE("otoceni jednoho kloubu tam a zpet vrati puvodni polohu") {
   CHECK(first.isApprox(again, kTol));
 }
 
-TEST_CASE("continuous kloub prijme uhel mimo interval (-pi, pi)") {
-  // Continuous kloub nema meze, takze q = 7 rad je legitimni vstup. Vysledek
-  // musi byt stejny jako pro 7 - 2*pi — ne proto, ze bychom uhel zabalovali,
-  // ale protoze rotace o 2*pi je identita.
+TEST_CASE("a continuous joint accepts an angle outside (-pi, pi)") {
+  // A continuous joint has no limits, so q = 7 rad is a legitimate input. The
+  // result must match that for 7 - 2*pi -- not because we wrap the angle, but
+  // because a rotation by 2*pi is the identity.
   const std::string xml =
       "<robot name=\"r\">"
       "  <link name=\"base\"/><link name=\"a\"/>"
@@ -483,16 +486,17 @@ TEST_CASE("continuous kloub prijme uhel mimo interval (-pi, pi)") {
   Eigen::VectorXd wrapped(1);
   wrapped << 7.0 - 4.0 * kHalfPi;
 
-  // Volnejsi tolerance: 7 - 2*pi je odecteni skoro stejnych cisel, takze uhel
-  // sam nese chybu radu 1e-16, ktera se do rotace propise primo.
+  // Looser tolerance: 7 - 2*pi subtracts nearly equal numbers, so the angle
+  // itself carries an error of order 1e-16 that passes straight into the
+  // rotation.
   CHECK(forwardKinematics(robot, big).isApprox(forwardKinematics(robot, wrapped), 1e-14));
 }
 
 // ---------------------------------------------------------------------------
-// Chybove stavy
+// Error cases
 // ---------------------------------------------------------------------------
 
-TEST_CASE("spatny rozmer q je vyjimka") {
+TEST_CASE("a wrong-size q is an exception") {
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
   CHECK_THROWS_AS(forwardKinematics(robot, zeros(1)), std::invalid_argument);
   CHECK_THROWS_AS(forwardKinematics(robot, zeros(3)), std::invalid_argument);
@@ -500,11 +504,11 @@ TEST_CASE("spatny rozmer q je vyjimka") {
   CHECK_NOTHROW(forwardKinematics(robot, zeros(2)));
 }
 
-TEST_CASE("zprava o spatnem rozmeru q uvadi obe cisla") {
+TEST_CASE("the wrong-size q message states both numbers") {
   const Robot robot = Robot::fromUrdfFile(fixture("fixed_chain.urdf"));
   try {
     forwardKinematics(robot, zeros(5));
-    FAIL("ocekavana vyjimka std::invalid_argument");
+    FAIL("expected std::invalid_argument");
   } catch (const std::invalid_argument& e) {
     const std::string message = e.what();
     CHECK(message.find('5') != std::string::npos);
@@ -513,14 +517,13 @@ TEST_CASE("zprava o spatnem rozmeru q uvadi obe cisla") {
   }
 }
 
-TEST_CASE("u robota s mimic klouby zprava vysvetli rozdil poctu") {
-  // numJoints() == 3, numDofs() == 2. Kdo pouzije numJoints(), dostane
-  // vyjimku — a ta mu musi rovnou rict proc, jinak to vypada jako chyba
-  // knihovny.
+TEST_CASE("for a robot with mimic joints the message explains the count difference") {
+  // numJoints() == 3, numDofs() == 2. Whoever uses numJoints() gets an
+  // exception, and it must say why outright, or it looks like a library bug.
   const Robot robot = Robot::fromUrdfFile(fixture("mimic_gripper.urdf"), "hand");
   try {
     forwardKinematics(robot, zeros(robot.numJoints()));
-    FAIL("ocekavana vyjimka std::invalid_argument");
+    FAIL("expected std::invalid_argument");
   } catch (const std::invalid_argument& e) {
     CHECK(std::string(e.what()).find("mimic") != std::string::npos);
   }

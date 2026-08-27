@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
-<!-- Neznamy typ kloubu. 'screw' v URDF neexistuje (a v teto knihovne uz vubec,
-     protoze by vazal rotaci a translaci na jeden skalar jinak nez prismatic). -->
+<!-- An unknown joint type. 'screw' does not exist in URDF, and would not fit
+     this library anyway: it couples rotation and translation to one scalar in a
+     way prismatic does not. -->
 <robot name="unknown_type">
   <link name="base"/>
   <link name="link1"/>
