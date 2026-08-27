@@ -58,8 +58,8 @@ jobs:
         run: cmake --build --preset debug-asan
 
       - name: Test
-        # halt_on_error + -fno-sanitize-recover=all: prvni nalez shodi proces,
-        # jinak by UBSan jen vypsal varovani a test by prosel.
+        # halt_on_error + -fno-sanitize-recover=all: the first finding aborts the
+        # process; otherwise UBSan would only print a warning and the test pass.
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:detect_stack_use_after_return=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
@@ -75,8 +75,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Verze je pinnuta zamerne: clang-format meni vystup mezi major verzemi,
-      # neshoda s lokalni verzi by delala cervenou CI na jinak dobrem kodu.
+      # The version is pinned deliberately: clang-format changes its output
+      # between major versions, and a mismatch with the local version would turn
+      # CI red on otherwise fine code.
       - name: Install clang-format
         run: pip install clang-format==21.1.8
 
