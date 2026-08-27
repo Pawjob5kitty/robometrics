@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- Neznamy typ kloubu. 'screw' v URDF neexistuje (a v teto knihovne uz vubec,
+     protoze by vazal rotaci a translaci na jeden skalar jinak nez prismatic). -->
+<robot name="unknown_type">
+  <link name="base"/>
+  <link name="link1"/>
+
+  <joint name="joint1" type="screw">
+    <parent link="base"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.5" upper="1.5" effort="87" velocity="2.61"/>
+  </joint>
+</robot>

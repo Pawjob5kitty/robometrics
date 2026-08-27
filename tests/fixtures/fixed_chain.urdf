@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<!-- Fixed klouby na obou mistech, kde se lisi chovani:
+
+       base  [joint1 revolute]>  link1  [mount_fixed]>  mount
+             [joint2 revolute]>  link2  [tool_fixed]>   tool
+
+     (V XML komentari nesmi byt dve pomlcky za sebou, takze sipky jsou
+     zkracene. Neni to preklep.)
+
+     mount_fixed je UPROSTRED retezu: musi se slozit do originTransform
+     nasledujiciho pohybliveho kloubu (joint2 pak zacina na 0.2+0.3 = 0.5).
+
+     tool_fixed je na KONCI: zadny nasledujici pohyblivy kloub neexistuje,
+     takze skladani dopredu by ho zahodilo. Musi prezit jako Link::offset
+     linku 'tool'. Tenhle kloub je duvod, proc ma Link vlastni offset. -->
+<robot name="fixed_chain">
+  <link name="base"/>
+  <link name="link1"/>
+  <link name="mount"/>
+  <link name="link2"/>
+  <link name="tool"/>
+
+  <joint name="joint1" type="revolute">
+    <parent link="base"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.5" upper="1.5" effort="87" velocity="2.61"/>
+  </joint>
+
+  <joint name="mount_fixed" type="fixed">
+    <parent link="link1"/>
+    <child link="mount"/>
+    <origin xyz="0.2 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="joint2" type="revolute">
+    <parent link="mount"/>
+    <child link="link2"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2" upper="2" effort="12" velocity="2.61"/>
+  </joint>
+
+  <joint name="tool_fixed" type="fixed">
+    <parent link="link2"/>
+    <child link="tool"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+  </joint>
+</robot>

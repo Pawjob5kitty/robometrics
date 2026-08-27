@@ -1,0 +1,14 @@
+build/
+out/
+_deps/
+
+# clangd / IDE
+.cache/
+compile_commands.json
+.vscode/
+.idea/
+CMakeUserPresets.json
+
+# OS
+.DS_Store
+Thumbs.db

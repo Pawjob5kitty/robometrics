@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: release (gcc)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Cache FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: build/release/_deps
+          key: deps-release-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake --preset release
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Test
+        run: ctest --preset release
+
+  debug-asan:
+    name: debug + asan/ubsan (clang)
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Cache FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: build/debug-asan/_deps
+          key: deps-debug-asan-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake --preset debug-asan
+
+      - name: Build
+        run: cmake --build --preset debug-asan
+
+      - name: Test
+        # halt_on_error + -fno-sanitize-recover=all: prvni nalez shodi proces,
+        # jinak by UBSan jen vypsal varovani a test by prosel.
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:detect_stack_use_after_return=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --preset debug-asan
+
+  format:
+    name: clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Verze je pinnuta zamerne: clang-format meni vystup mezi major verzemi,
+      # neshoda s lokalni verzi by delala cervenou CI na jinak dobrem kodu.
+      - name: Install clang-format
+        run: pip install clang-format==21.1.8
+
+      - name: Check formatting
+        run: |
+          files=$(git ls-files '*.hpp' '*.cpp')
+          echo "$files"
+          test -n "$files"
+          clang-format --dry-run --Werror $files

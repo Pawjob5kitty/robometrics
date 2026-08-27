@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<!-- Tri origin bloky s rucne spocitanymi rotacemi. Vsechny klouby jsou
+     revolute, aby se origin dal cist primo z Joint::originTransform (fixed
+     klouby by se slozily a bylo by to neprehledne).
+
+     Uhly jsou pi/2 na plnou presnost double: 1.5707963267948966.
+
+     case_yaw    rpy = (0, 0, pi/2)
+     case_rp     rpy = (pi/2, pi/2, 0)   <- rozlisuje Rz*Ry*Rx od Rx*Ry*Rz
+     case_ry     rpy = (pi/2, 0, pi/2)
+
+     Ocekavane matice jsou vypsane v tests/test_urdf.cpp vcetne odvozeni. -->
+<robot name="rpy_cases">
+  <link name="base"/>
+  <link name="l1"/>
+  <link name="l2"/>
+  <link name="l3"/>
+
+  <joint name="case_yaw" type="revolute">
+    <parent link="base"/>
+    <child link="l1"/>
+    <origin xyz="0 0 0" rpy="0 0 1.5707963267948966"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+
+  <joint name="case_rp" type="revolute">
+    <parent link="l1"/>
+    <child link="l2"/>
+    <origin xyz="0.1 -0.2 0.3" rpy="1.5707963267948966 1.5707963267948966 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+
+  <joint name="case_ry" type="revolute">
+    <parent link="l2"/>
+    <child link="l3"/>
+    <origin xyz="0 0 0" rpy="1.5707963267948966 0 1.5707963267948966"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+</robot>

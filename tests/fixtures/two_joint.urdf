@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- Nejmensi smysluplny retez: baze + dva revolute klouby, zadny fixed.
+     Jediny list je link2, takze autodetekce tipu ho musi najit sama. -->
+<robot name="two_joint">
+  <link name="base"/>
+  <link name="link1"/>
+  <link name="link2"/>
+
+  <joint name="joint1" type="revolute">
+    <parent link="base"/>
+    <child link="link1"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.5" upper="1.5" effort="87" velocity="2.61"/>
+  </joint>
+
+  <joint name="joint2" type="revolute">
+    <parent link="link1"/>
+    <child link="link2"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2" upper="2" effort="12" velocity="2.61"/>
+  </joint>
+</robot>

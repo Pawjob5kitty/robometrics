@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- Jeden revolute kloub kolem z ve vysce 0.1, a za nim fixed rameno delky 0.5
+     ve smeru x. Rameno je dulezite: kdyby tip lezel NA ose otaceni, rotace by
+     na jeho poloze nebyla videt a test by prosel i pro R = I.
+
+     Ocekavane hodnoty pro tip jsou rucne spocitane v test_kinematics.cpp. -->
+<robot name="single_joint">
+  <link name="base"/>
+  <link name="arm"/>
+  <link name="tip"/>
+
+  <joint name="j" type="revolute">
+    <parent link="base"/>
+    <child link="arm"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.15" upper="3.15" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="arm_fixed" type="fixed">
+    <parent link="arm"/>
+    <child link="tip"/>
+    <origin xyz="0.5 0 0" rpy="0 0 0"/>
+  </joint>
+</robot>
