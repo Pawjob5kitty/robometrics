@@ -112,7 +112,7 @@ endif()
 # ---------------------------------------------------------------------------
 # Knihovna
 # ---------------------------------------------------------------------------
-add_library(robometrics src/se3.cpp src/urdf.cpp src/kinematics.cpp src/jacobian.cpp)
+add_library(robometrics src/se3.cpp src/urdf.cpp src/kinematics.cpp src/jacobian.cpp src/metrics.cpp)
 add_library(robometrics::robometrics ALIAS robometrics)
 
 target_include_directories(

@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!-- Rovinne rameno 2R: dva rovnobezne klouby kolem z, mezi nimi a za nimi
+     rameno delky 0.3. Klasicky ucebnicovy priklad singularity:
+     pri q2 = 0 je rameno natazene a tip se nemuze hnout radialne. -->
+<robot name="planar_arm">
+  <link name="base"/>
+  <link name="link1"/>
+  <link name="link2"/>
+  <link name="tip"/>
+
+  <joint name="j1" type="revolute">
+    <parent link="base"/><child link="link1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="j2" type="revolute">
+    <parent link="link1"/><child link="link2"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="tip_fixed" type="fixed">
+    <parent link="link2"/><child link="tip"/>
+    <origin xyz="0.3 0 0" rpy="0 0 0"/>
+  </joint>
+</robot>
