@@ -49,3 +49,49 @@ TEST_CASE("jacobian sedi s numerickou derivaci") {
     CHECK((J.col(i) - inBase).cwiseAbs().maxCoeff() < 1e-6);
   }
 }
+
+TEST_CASE("jednokloubovy robot, sloupec spocitany rucne") {
+  // Kloub kolem z v (0,0,0.1), rameno 0.5 podel x -> tip v (0.5, 0, 0.1).
+  // Pri q=0 a otaceni rychlosti 1:
+  //   omega = (0, 0, 1)
+  //   v     = omega x (p_tip - p_joint) = (0,0,1) x (0.5,0,0) = (0, 0.5, 0)
+  const robometrics::Robot robot =
+      robometrics::Robot::fromUrdfFile(fixture("single_joint.urdf"));
+
+  Eigen::VectorXd q(1);
+  q << 0.0;
+
+  const Eigen::MatrixXd J = robometrics::jacobian(robot, q);
+
+  robometrics::Vec6 expected;
+  expected << 0.0, 0.5, 0.0,   // v
+              0.0, 0.0, 1.0;   // omega
+
+  CHECK((J.col(0) - expected).cwiseAbs().maxCoeff() < 1e-12);
+}
+
+TEST_CASE("numericka derivace sedi i s mimic klouby") {
+  const robometrics::Robot robot =
+      robometrics::Robot::fromUrdfFile(fixture("mimic_gripper.urdf"), "hand");
+
+  Eigen::VectorXd q(robot.numDofs());
+  q << 0.3, 0.02;
+
+  const Eigen::MatrixXd J = robometrics::jacobian(robot, q);
+  const robometrics::SE3 T = robometrics::forwardKinematics(robot, q);
+  const robometrics::SE3 rotOnly(T.rotation(), robometrics::Vec3::Zero());
+
+  const double h = 1e-6;
+  for (int i = 0; i < robot.numDofs(); ++i) {
+    Eigen::VectorXd qp = q, qm = q;
+    qp(i) += h;
+    qm(i) -= h;
+
+    const robometrics::Vec6 numeric =
+        robometrics::log(robometrics::forwardKinematics(robot, qm).inverse() *
+                         robometrics::forwardKinematics(robot, qp)) / (2.0 * h);
+    const robometrics::Vec6 inBase = robometrics::adjoint(rotOnly) * numeric;
+
+    CHECK((J.col(i) - inBase).cwiseAbs().maxCoeff() < 1e-6);
+  }
+}
