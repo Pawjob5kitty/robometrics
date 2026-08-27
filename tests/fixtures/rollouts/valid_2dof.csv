@@ -1,0 +1,10 @@
+# robometrics rollout v1
+# robot: planar_arm.urdf
+# dofs: 2
+# success: 1
+# task: reach_left
+t,q0,q1
+0,0,1.5707963267948966
+0.05,0.1,1.4
+0.1,0.2,1.3
+0.15,0.3,1.2

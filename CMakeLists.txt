@@ -112,7 +112,8 @@ endif()
 # ---------------------------------------------------------------------------
 # Knihovna
 # ---------------------------------------------------------------------------
-add_library(robometrics src/se3.cpp src/urdf.cpp src/kinematics.cpp src/jacobian.cpp src/metrics.cpp)
+add_library(robometrics src/se3.cpp src/urdf.cpp src/kinematics.cpp src/jacobian.cpp
+                        src/metrics.cpp src/rollout.cpp src/report.cpp src/cli.cpp)
 add_library(robometrics::robometrics ALIAS robometrics)
 
 target_include_directories(
@@ -124,6 +125,16 @@ target_link_libraries(
   robometrics
   PUBLIC Eigen3::Eigen
   PRIVATE pugixml::pugixml robometrics_warnings)
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+# main() je zamerne trivialni; veskera logika je v runCli(), aby sla testovat
+# bez spousteni procesu. Viz include/robometrics/cli.hpp.
+add_executable(robometrics_cli apps/main.cpp)
+set_target_properties(robometrics_cli PROPERTIES OUTPUT_NAME robometrics)
+target_link_libraries(robometrics_cli PRIVATE robometrics::robometrics
+                                              robometrics_warnings)
 
 # ---------------------------------------------------------------------------
 # Testy

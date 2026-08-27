@@ -1,5 +1,6 @@
 add_executable(robometrics_tests main.cpp test_se3.cpp test_urdf.cpp
-                                test_kinematics.cpp test_jacobian.cpp test_metrics.cpp)
+                                test_kinematics.cpp test_jacobian.cpp test_metrics.cpp
+                                test_rollout.cpp test_report.cpp test_cli.cpp)
 
 target_link_libraries(
   robometrics_tests PRIVATE robometrics::robometrics doctest::doctest rapidcheck
