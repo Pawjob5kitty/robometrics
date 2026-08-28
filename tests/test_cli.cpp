@@ -114,8 +114,7 @@ TEST_CASE("one clean rollout produces one CSV row and exit code 0") {
   CHECK(r.code == 0);
   const std::vector<std::string> csv = lines(r.out);
   REQUIRE(csv.size() == 2);  // header plus one row
-  CHECK(csv[0] ==
-        "file,dofs,steps,success,dexterity_margin,path_efficiency,low_dex_spans,worst_at");
+  CHECK(csv[0] == "file,dofs,steps,success,dexterity_norm,path_efficiency,low_dex_spans,worst_at");
   CHECK(csv[1].find("clean.csv") != std::string::npos);
 
   // Column count must match the header, or every downstream reader misaligns.
@@ -194,6 +193,15 @@ TEST_CASE("stderr reports spans with INCLUSIVE bounds") {
   }
   REQUIRE(values.size() == 20);
 
+  // The profile is normalised (sigma_min / L), so the boundary to compare
+  // against is the normalised threshold, 0.05 / L. L is printed on stderr; read
+  // it back rather than hard-coding the fixture's length.
+  const std::string lengthTag = "characteristic length: ";
+  const std::size_t lengthAt = r.err.find(lengthTag);
+  REQUIRE(lengthAt != std::string::npos);
+  const double charLength = std::stod(r.err.substr(lengthAt + lengthTag.size()));
+  const double normThreshold = 0.05 / charLength;
+
   // Parse "[0..N" out of stderr and check the boundary against the profile.
   const std::size_t open = r.err.find("[0..");
   REQUIRE(open != std::string::npos);
@@ -202,9 +210,9 @@ TEST_CASE("stderr reports spans with INCLUSIVE bounds") {
   REQUIRE(numEnd != std::string::npos);
   const std::size_t lastBad = std::stoul(r.err.substr(numStart, numEnd - numStart));
 
-  CHECK(values[lastBad] < 0.05);
+  CHECK(values[lastBad] < normThreshold);
   REQUIRE(lastBad + 1 < values.size());
-  CHECK(values[lastBad + 1] >= 0.05);
+  CHECK(values[lastBad + 1] >= normThreshold);
 }
 
 // ---------------------------------------------------------------------------
@@ -461,7 +469,7 @@ TEST_CASE("a rollout with no computable metrics leaves empty fields, not zeros")
     fields.push_back(field);
   }
   REQUIRE(fields.size() == 8);
-  CHECK_FALSE(fields[4].empty());  // dexterity margin exists for one step
+  CHECK_FALSE(fields[4].empty());  // dexterity_norm exists for one step
   CHECK(fields[5].empty());        // path efficiency does not
 }
 
@@ -522,7 +530,7 @@ TEST_CASE("a real small value is not flattened") {
 
 TEST_CASE("worst_dex is gone and worst_at is still the last column") {
   // The dropped column, pinned so it cannot come back by accident. worst_dex
-  // was identical to dexterity_margin by construction.
+  // was identical to dexterity_norm by construction.
   const TempDir dir;
   const std::string input = dir.write("cols.csv", rolloutText(ramp(20, 1.2, 1.3), 1));
 
@@ -615,7 +623,7 @@ TEST_CASE("a mixed-joint robot leaves path_efficiency empty but fills the rest")
   }
   REQUIRE(fields.size() == 8);
   CHECK(fields[5].empty());        // path_efficiency: N/A
-  CHECK_FALSE(fields[4].empty());  // dexterity_margin: present
+  CHECK_FALSE(fields[4].empty());  // dexterity_norm: present
 
   // The reason is stated on stderr, distinct from "not redundant".
   CHECK(r.err.find("revolute and prismatic") != std::string::npos);
@@ -642,9 +650,63 @@ TEST_CASE("a non-redundant robot's efficiency N/A is reported with its own reaso
   }
   REQUIRE(fields.size() == 8);
   CHECK(fields[5].empty());        // path_efficiency: N/A
-  CHECK_FALSE(fields[4].empty());  // dexterity_margin: present
+  CHECK_FALSE(fields[4].empty());  // dexterity_norm: present
 
   CHECK(r.err.find("not redundant") != std::string::npos);
   CHECK(r.err.find("robot not redundant") != std::string::npos);  // summary line
   CHECK(r.err.find("revolute and prismatic") == std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// Characteristic length and dexterity normalisation
+// ---------------------------------------------------------------------------
+
+TEST_CASE("the computed characteristic length is reported on stderr") {
+  const TempDir dir;
+  const std::string input = dir.write("clean.csv", rolloutText(ramp(20, 1.2, 1.4), 1));
+
+  const Run r = run({"analyze", "--urdf", fixture("planar_arm.urdf"), input});
+  // planar_arm is 0.3 + 0.3 links plus a 0.3 tip offset -> 0.6 m, computed.
+  CHECK(r.err.find("characteristic length: 0.6 m (computed from URDF)") != std::string::npos);
+}
+
+TEST_CASE("--char-length overrides the length and rescales the dexterity column") {
+  // The override is announced as 'given', and since dexterity is sigma_min / L,
+  // reporting a length of 1 m instead of the computed 0.6 m multiplies every
+  // dexterity value by exactly 0.6. Spans do not move -- the CLI divides the
+  // threshold by the same L -- so this checks the number, not the flagging.
+  const TempDir dir;
+  const std::string input = dir.write("clean.csv", rolloutText(ramp(20, 1.2, 1.4), 1));
+
+  auto dexterity = [&](const std::vector<std::string>& extra) {
+    std::vector<std::string> args = {"analyze", "--urdf", fixture("planar_arm.urdf")};
+    args.insert(args.end(), extra.begin(), extra.end());
+    args.push_back(input);
+    const Run r = run(args);
+    REQUIRE(r.code == 0);
+    const std::vector<std::string> csv = lines(r.out);
+    REQUIRE(csv.size() == 2);
+    std::vector<std::string> fields;
+    std::istringstream in(csv[1]);
+    std::string f;
+    while (std::getline(in, f, ',')) fields.push_back(f);
+    REQUIRE(fields.size() >= 5);
+    return std::make_pair(r.err, std::stod(fields[4]));  // dexterity_norm
+  };
+
+  const auto computed = dexterity({});
+  const auto given = dexterity({"--char-length", "1"});
+
+  CHECK(given.first.find("characteristic length: 1 m (given)") != std::string::npos);
+  // sigma_min / 1 is 0.6 times sigma_min / 0.6.
+  CHECK(given.second == doctest::Approx(0.6 * computed.second));
+}
+
+TEST_CASE("--char-length rejects a non-positive value") {
+  const TempDir dir;
+  const std::string input = dir.write("clean.csv", rolloutText(ramp(20, 1.2, 1.4), 1));
+
+  const Run r = run({"analyze", "--urdf", fixture("planar_arm.urdf"), "--char-length", "0", input});
+  CHECK(r.code == 2);
+  CHECK(r.err.find("--char-length must be a positive finite number") != std::string::npos);
 }

@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- planar_arm scaled up by exactly 2: every link length doubled (0.3 -> 0.6),
+     joint axes and limits unchanged. Same mechanism at twice the size, used to
+     check that normalised dexterity is scale-invariant: at the same joint
+     configuration the raw sigma_min doubles but sigma_min / characteristicLength
+     does not, because L doubles too. -->
+<robot name="planar_arm_2x">
+  <link name="base"/>
+  <link name="link1"/>
+  <link name="link2"/>
+  <link name="tip"/>
+
+  <joint name="j1" type="revolute">
+    <parent link="base"/><child link="link1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="j2" type="revolute">
+    <parent link="link1"/><child link="link2"/>
+    <origin xyz="0.6 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.14" upper="3.14" effort="10" velocity="1"/>
+  </joint>
+
+  <joint name="tip_fixed" type="fixed">
+    <parent link="link2"/><child link="tip"/>
+    <origin xyz="0.6 0 0" rpy="0 0 0"/>
+  </joint>
+</robot>

@@ -31,6 +31,7 @@ struct Options {
   std::string out;      // empty means "write the CSV to the out stream"
   std::string profileOut;
   double threshold = kDefaultDexterityThreshold;
+  double charLength = 0.0;  // 0 means "compute it from the URDF"
   std::vector<std::string> inputs;
   bool help = false;
 };
@@ -44,6 +45,8 @@ const char* kUsage =
     "  --out FILE           write the report CSV here (default: stdout)\n"
     "  --profile-out DIR    also write one per-step profile CSV per rollout\n"
     "  --threshold VALUE    low-dexterity threshold in m/rad (default 0.05)\n"
+    "  --char-length M      characteristic length for normalising dexterity, in\n"
+    "                       metres; default: summed link lengths from the URDF\n"
     "  -h, --help           this text\n"
     "\n"
     "The report CSV goes to stdout unless --out is given; the summary always\n"
@@ -113,6 +116,22 @@ bool parseOptions(const std::vector<std::string>& args, Options& opts, std::stri
       if (!extracted || !leftover.empty() || !std::isfinite(opts.threshold) ||
           opts.threshold < 0.0) {
         error = "--threshold must be a non-negative finite number, got '" + text + "'";
+        return false;
+      }
+    } else if (a == "--char-length") {
+      std::string text;
+      if (!takeValue(args, i, "--char-length", text, error)) return false;
+      // Same extract-then-check-for-leftovers dance as --threshold above; see
+      // there for why the order matters. Strictly positive, because it divides.
+      std::istringstream in(text);
+      in >> opts.charLength;
+      const bool extracted = !in.fail();
+      std::string leftover;
+      in.clear();
+      in >> leftover;
+      if (!extracted || !leftover.empty() || !std::isfinite(opts.charLength) ||
+          opts.charLength <= 0.0) {
+        error = "--char-length must be a positive finite number, got '" + text + "'";
         return false;
       }
     } else if (a.rfind("--", 0) == 0) {
@@ -298,6 +317,23 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     return 2;
   }
 
+  // Length scale for normalising dexterity, resolved once for the whole run. An
+  // explicit --char-length wins; otherwise it is the summed link lengths from
+  // the URDF. Printed either way so the number the metric is divided by is never
+  // a mystery, and the automatic value can be sanity-checked or overridden.
+  const bool charLengthGiven = opts.charLength > 0.0;
+  const double charLength = charLengthGiven ? opts.charLength : characteristicLength(*robot);
+  if (!(charLength > 0.0)) {
+    err << "robometrics: characteristic length of '" << robot->name()
+        << "' is zero; pass --char-length to set it\n";
+    return 2;
+  }
+  err << "characteristic length: " << num(charLength) << " m ("
+      << (charLengthGiven ? "given" : "computed from URDF") << ")\n";
+  // The dimensionless threshold: the physical m/rad value divided by the same L
+  // the dexterity is divided by, so the flagged region does not move with size.
+  const double normalizedThreshold = opts.threshold / charLength;
+
   // The CSV goes to a file if asked, otherwise to the caller's out stream.
   std::ofstream outFile;
   if (!opts.out.empty()) {
@@ -309,10 +345,14 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
   }
   std::ostream& csv = opts.out.empty() ? out : outFile;
 
-  // No separate worst_dex column: it would be identical to dexterity_margin by
+  // No separate worst_dex column: it would be identical to dexterity_norm by
   // construction, since the margin IS the minimum of the profile. Two columns
   // that can never disagree are two chances to read the wrong one.
-  csv << "file,dofs,steps,success,dexterity_margin,path_efficiency,low_dex_spans,worst_at\n";
+  //
+  // dexterity_norm, not dexterity_margin: the value is now sigma_min divided by
+  // the characteristic length (printed above), so it is dimensionless. The name
+  // carries the units the number no longer does.
+  csv << "file,dofs,steps,success,dexterity_norm,path_efficiency,low_dex_spans,worst_at\n";
 
   std::size_t ok = 0;
   std::size_t failed = 0;
@@ -328,7 +368,7 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     RolloutReport report;
     try {
       rollout = loadRollout(path);
-      report = analyze(*robot, rollout, opts.threshold);
+      report = analyze(*robot, rollout, normalizedThreshold, charLength);
     } catch (const std::exception& e) {
       // One bad file must not end the run -- which is why the exit code is "at
       // least one succeeded" rather than "none failed".
@@ -410,7 +450,7 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
   const std::size_t total = ok + failed;
   err << total << " rollout" << (total == 1 ? "" : "s") << ", " << ok << " ok, " << failed
       << " failed to parse\n";
-  printStat(err, "dexterity margin: ", margins);
+  printStat(err, "dexterity (norm): ", margins);
   // Skip the bare "no values" line when every efficiency is N/A: the reason line
   // below says the same thing and more. Still print it when some values exist.
   if (!efficiencies.empty() || efficiencyNA == 0) {

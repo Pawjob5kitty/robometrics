@@ -103,6 +103,32 @@ std::vector<double> sigmaMinProfile(const Robot& robot, const std::vector<Eigen:
 /// Post: std::nullopt when traj is empty; otherwise a value >= 0.
 std::optional<double> dexterityMargin(const Robot& robot, const std::vector<Eigen::VectorXd>& traj);
 
+/// Characteristic length L of a robot, in metres: the arm stretched straight.
+///
+/// sigmaMinTranslation is metres of tip travel per radian (or per metre) of
+/// joint motion, so it scales with the robot's size -- the SAME pose on a
+/// tabletop arm and on a Panda give values an order of magnitude apart while
+/// being equally close to singular. Dividing by L cancels the metres and leaves
+/// a DIMENSIONLESS dexterity that is comparable across robots, and lets one
+/// threshold mean the same thing on every arm (see report.hpp).
+///
+/// L is the summed link lengths along the base->tip chain: the norms of the
+/// origin-transform translations of every movable joint from the tip back to
+/// the root, plus the tip link's own fixed offset. Each origin already has any
+/// intervening fixed joints folded in (see urdf.hpp), so this is exactly the
+/// distance the tip reaches with every joint aligned -- the natural length
+/// scale of the mechanism. Only the chain to the designated tip counts; a
+/// gripper's finger branch does not lengthen the arm.
+///
+/// A PROPERTY OF THE MECHANISM, not of any configuration: it takes no q and is
+/// computed once per robot, never per frame. Callers that want to override the
+/// automatic value (an odd URDF, a task-specific scale) pass their own L; the
+/// CLI exposes --char-length for exactly that.
+///
+/// Pre:  the tip is reachable from the root (true for any parsed Robot).
+/// Post: result >= 0, and > 0 for any robot whose links have length.
+double characteristicLength(const Robot& robot);
+
 /// Whether pathEfficiency can return a meaningful value for a robot, and if not,
 /// why. The two reasons are one-shot properties of the robot (its joint types
 /// and its Jacobian rank), not of any single step, and they are distinguished

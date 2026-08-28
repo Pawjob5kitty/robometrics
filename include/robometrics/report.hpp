@@ -14,7 +14,7 @@
 /// 0.008` says which forty frames to open.
 namespace robometrics {
 
-/// Default threshold for "the arm was struggling here", in metres per radian.
+/// Default low-dexterity threshold, in metres per radian -- the PHYSICAL scale.
 ///
 /// Where 0.05 comes from. sigma_min is tip speed per unit of joint speed in
 /// the worst direction, so the question is what a normal task speed costs:
@@ -26,19 +26,40 @@ namespace robometrics {
 /// 2.6 rad/s. So 0.05 is roughly where tracking an ordinary motion in the worst
 /// direction starts to saturate the hardware.
 ///
-/// IT SCALES WITH THE ROBOT, which is the bigger caveat. sigma_min is in metres
-/// per radian, so it is proportional to reach: the same pose on a tabletop arm
-/// and on a Panda give values an order of magnitude apart while being equally
-/// close to singular. 0.05 is calibrated to Panda scale (~0.85 m reach); on a
-/// small arm it flags almost everything, on a large one almost nothing. The
-/// principled fix is to normalise by a characteristic length from the URDF and
-/// compare against a dimensionless threshold -- a change to what the metric
-/// MEANS, not a tuning tweak, so it is not done here.
+/// IT SCALES WITH THE ROBOT, which is why it is a PHYSICAL value that must be
+/// normalised before use. sigma_min is proportional to reach, so the same pose
+/// on a tabletop arm and on a Panda give values an order of magnitude apart
+/// while being equally close to singular. 0.05 is calibrated to Panda scale
+/// (~0.85 m reach); raw, it would flag almost everything on a small arm and
+/// almost nothing on a large one.
+///
+/// The fix: divide sigma_min by the robot's characteristic length L (see
+/// characteristicLength in metrics.hpp) to get a dimensionless dexterity, and
+/// divide THIS threshold by the SAME L. Dividing both sides of the comparison
+/// by one L leaves the physical operating point exactly where it was -- a step
+/// flagged before normalisation is flagged after it, whatever the robot's size
+/// -- so the change makes the metric comparable across robots without moving
+/// any boundary on a given one. analyze() works in the normalised space; the
+/// CLI recomputes 0.05 / L with the actual robot's L.
 inline constexpr double kDefaultDexterityThreshold = 0.05;
+
+/// Nominal characteristic length, in metres, for the calibration above: a Panda
+/// reaches about 0.85 m. Only used to express the physical threshold as a
+/// dimensionless default for analyze() when no robot-specific L is supplied;
+/// the CLI always uses the real L instead.
+inline constexpr double kNominalCharLength = 0.85;
+
+/// The default threshold as a DIMENSIONLESS value -- the physical 0.05 m/rad at
+/// Panda scale. This is what analyze() compares directly against the normalised
+/// dexterity; supply a robot's real L (or let analyze compute it) to keep the
+/// physical operating point exact on any size of arm.
+inline constexpr double kDefaultNormalizedThreshold =
+    kDefaultDexterityThreshold / kNominalCharLength;
 
 /// Everything computed about one rollout.
 struct RolloutReport {
-  /// Worst dexterity over the whole rollout. nullopt for an empty rollout.
+  /// Worst dexterity over the whole rollout, NORMALISED by the characteristic
+  /// length (dimensionless). nullopt for an empty rollout.
   std::optional<double> dexterityMargin;
 
   /// Fraction of joint motion that moved the tip. nullopt for a rollout with
@@ -47,7 +68,8 @@ struct RolloutReport {
   /// it.
   std::optional<double> pathEfficiency;
 
-  /// sigma_min at every step. Same length as the rollout.
+  /// Normalised dexterity (sigma_min / characteristic length) at every step.
+  /// Same length as the rollout.
   std::vector<double> dexterityProfile;
 
   /// Index of the worst step, the argmin of dexterityProfile. nullopt for an
@@ -79,8 +101,20 @@ struct RolloutReport {
 
 /// Computes every metric for one rollout.
 ///
-/// A step is low-dexterity when its sigma_min is STRICTLY below the threshold:
-/// the threshold is the last acceptable value, not the first unacceptable one.
+/// The reported dexterityProfile and dexterityMargin are NORMALISED: each
+/// sigma_min is divided by `charLength`, so they are dimensionless and
+/// comparable across robots. `threshold` is likewise dimensionless and is
+/// compared DIRECTLY against the normalised profile -- it is not divided again.
+/// A step is low-dexterity when its normalised dexterity is STRICTLY below the
+/// threshold: the threshold is the last acceptable value, not the first
+/// unacceptable one.
+///
+/// `charLength` defaults to characteristicLength(robot); pass an explicit value
+/// to override the automatic length scale. It must be > 0.
+///
+/// To reproduce the pre-normalisation physical threshold of 0.05 m/rad, pass
+/// `0.05 / charLength` -- dividing both dexterity and threshold by the same L
+/// leaves every span boundary exactly where it was (that is what the CLI does).
 ///
 /// Pre:  rollout.dofs == robot.numDofs(), else std::invalid_argument. A
 ///       mismatch means the wrong URDF was paired with the rollout, and
@@ -89,6 +123,7 @@ struct RolloutReport {
 /// Post: dexterityProfile.size() == rollout.size();
 ///       spans are ordered, disjoint, and every one is non-empty.
 RolloutReport analyze(const Robot& robot, const Rollout& rollout,
-                      double threshold = kDefaultDexterityThreshold);
+                      double threshold = kDefaultNormalizedThreshold,
+                      std::optional<double> charLength = std::nullopt);
 
 }  // namespace robometrics

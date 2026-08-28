@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "robometrics/metrics.hpp"
 #include "robometrics/report.hpp"
 
 namespace {
@@ -343,5 +344,69 @@ TEST_CASE("every flagged step is below the threshold and every other one is not"
         std::any_of(report.lowDexteritySpans.begin(), report.lowDexteritySpans.end(),
                     [i](const RolloutReport::Span& s) { return s.begin <= i && i < s.end; });
     CHECK(inSomeSpan == (report.dexterityProfile[i] < threshold));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Normalisation invariants
+// ---------------------------------------------------------------------------
+
+TEST_CASE("normalising both dexterity and threshold by L leaves the spans unmoved") {
+  // Invariant behind the whole change: the CLI divides sigma_min by L and the
+  // physical threshold by the SAME L, so no span boundary moves -- a rollout
+  // with zero spans before normalisation has zero after. Encoded here by
+  // running analyze twice: once raw (L = 1, threshold 0.05), once normalised
+  // (threshold 0.05 / L). Dividing dexterity but forgetting the threshold, or
+  // using a different L for the two, would shift a boundary and fail this.
+  const Robot robot = planarArm();
+  const int steps = 41;
+  const Rollout r = makeRollout(steps, [](int i) {
+    const double u = static_cast<double>(i) / (steps - 1);
+    return 1.2 * std::fabs(2.0 * u - 1.0);  // one dip through the singularity
+  });
+
+  const double physical = 0.05;
+  const double L = robometrics::characteristicLength(robot);
+  // The test only bites when L differs from 1: then "divide dexterity but not
+  // the threshold" moves the boundary and the span checks below catch it.
+  REQUIRE(std::fabs(L - 1.0) > 0.1);
+
+  const RolloutReport raw = analyze(robot, r, physical, 1.0);
+  const RolloutReport normd = analyze(robot, r, physical / L, L);
+
+  REQUIRE(raw.lowDexteritySpans.size() == normd.lowDexteritySpans.size());
+  for (std::size_t k = 0; k < raw.lowDexteritySpans.size(); ++k) {
+    CHECK(raw.lowDexteritySpans[k].begin == normd.lowDexteritySpans[k].begin);
+    CHECK(raw.lowDexteritySpans[k].end == normd.lowDexteritySpans[k].end);
+  }
+
+  // The normalised profile is exactly the raw one divided by L.
+  REQUIRE(raw.dexterityProfile.size() == normd.dexterityProfile.size());
+  for (std::size_t i = 0; i < raw.dexterityProfile.size(); ++i) {
+    CHECK(normd.dexterityProfile[i] == doctest::Approx(raw.dexterityProfile[i] / L));
+  }
+}
+
+TEST_CASE("analyze normalises the reported dexterity by the characteristic length") {
+  // Pins the exact divisor analyze uses. A margin divided by the wrong length --
+  // twice L, or a per-pose length -- can still be self-consistent within the
+  // report and pass every span test, yet disagree with sigma_min / L here.
+  const Robot robot = planarArm();
+  const Rollout r = makeRollout(20, [](int i) { return 0.4 + 0.05 * i; });
+
+  const RolloutReport report = analyze(robot, r);  // default L = characteristicLength(robot)
+  const std::optional<double> rawMargin = robometrics::dexterityMargin(robot, r.q);
+  REQUIRE(report.dexterityMargin.has_value());
+  REQUIRE(rawMargin.has_value());
+  CHECK(*report.dexterityMargin ==
+        doctest::Approx(*rawMargin / robometrics::characteristicLength(robot)));
+
+  // Every step, not just the worst: catches a per-pose divisor that happens to
+  // agree at the minimum.
+  const std::vector<double> rawProfile = robometrics::sigmaMinProfile(robot, r.q);
+  const double L = robometrics::characteristicLength(robot);
+  REQUIRE(rawProfile.size() == report.dexterityProfile.size());
+  for (std::size_t i = 0; i < rawProfile.size(); ++i) {
+    CHECK(report.dexterityProfile[i] == doctest::Approx(rawProfile[i] / L));
   }
 }

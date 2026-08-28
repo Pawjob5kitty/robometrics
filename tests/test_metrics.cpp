@@ -581,3 +581,47 @@ TEST_CASE("a mixed-joint robot yields no efficiency but keeps dexterity") {
   CHECK_FALSE(robometrics::pathEfficiency(robot, traj).has_value());
   CHECK(robometrics::dexterityMargin(robot, traj).has_value());
 }
+
+TEST_CASE("characteristicLength sums the link lengths along the base->tip chain") {
+  // planar_arm is two 0.3 links plus a 0.3 tip offset: 0.6 fully stretched. The
+  // first joint sits at the origin and contributes nothing, so a walk that
+  // started one joint too early or forgot the tip offset would not land on 0.6.
+  const robometrics::Robot arm = robometrics::Robot::fromUrdfFile(fixture("planar_arm.urdf"));
+  CHECK(robometrics::characteristicLength(arm) == doctest::Approx(0.6));
+
+  // Doubling every link doubles L exactly -- the property the normalisation
+  // below relies on.
+  const robometrics::Robot big = robometrics::Robot::fromUrdfFile(fixture("planar_arm_2x.urdf"));
+  CHECK(robometrics::characteristicLength(big) == doctest::Approx(1.2));
+}
+
+TEST_CASE("normalised dexterity is scale-invariant; raw dexterity is not") {
+  // The whole point of dividing by L. Two identical mechanisms at DIFFERENT
+  // sizes, driven through the SAME joint configurations: the raw margin scales
+  // with the robot (metres per radian), the normalised one does not. A
+  // normalisation that used the wrong length, or a per-pose length, would not
+  // make the two agree.
+  const robometrics::Robot small = robometrics::Robot::fromUrdfFile(fixture("planar_arm.urdf"));
+  const robometrics::Robot big = robometrics::Robot::fromUrdfFile(fixture("planar_arm_2x.urdf"));
+
+  std::vector<Eigen::VectorXd> traj;
+  for (int i = 0; i < 12; ++i) {
+    Eigen::VectorXd q(2);
+    q << 0.0, 0.4 + 0.1 * i;  // away from the stretched singularity
+    traj.push_back(q);
+  }
+
+  const std::optional<double> rawSmall = robometrics::dexterityMargin(small, traj);
+  const std::optional<double> rawBig = robometrics::dexterityMargin(big, traj);
+  REQUIRE(rawSmall.has_value());
+  REQUIRE(rawBig.has_value());
+
+  // Raw: the larger arm reaches twice as far per radian, so its margin is ~2x.
+  CHECK(*rawBig == doctest::Approx(2.0 * *rawSmall));
+
+  const double normSmall = *rawSmall / robometrics::characteristicLength(small);
+  const double normBig = *rawBig / robometrics::characteristicLength(big);
+
+  // Normalised: identical, because both the margin and L scaled by the same 2.
+  CHECK(normBig == doctest::Approx(normSmall));
+}

@@ -54,7 +54,8 @@ std::vector<RolloutReport::Span> findLowSpans(const std::vector<double>& profile
 
 }  // namespace
 
-RolloutReport analyze(const Robot& robot, const Rollout& rollout, double threshold) {
+RolloutReport analyze(const Robot& robot, const Rollout& rollout, double threshold,
+                      std::optional<double> charLength) {
   if (rollout.dofs != robot.numDofs()) {
     // Pairing the wrong URDF with a rollout would otherwise produce a full set
     // of plausible numbers describing a robot that never ran.
@@ -66,10 +67,24 @@ RolloutReport analyze(const Robot& robot, const Rollout& rollout, double thresho
 
   RolloutReport report;
 
+  // Length scale, resolved once for the whole rollout: the caller's override or
+  // the robot's own characteristic length. Never per frame -- the normalisation
+  // must divide every step by the SAME number for the metric to stay a property
+  // of the mechanism rather than of the pose.
+  const double length = charLength.value_or(characteristicLength(robot));
+
   // Computed once and everything else read off it. Calling dexterityMargin()
   // as well would recompute the profile internally and leave two code paths
   // that could disagree about the minimum.
   report.dexterityProfile = sigmaMinProfile(robot, rollout.q);
+
+  // Normalise in place: divide by the length scale so the profile is
+  // dimensionless. The threshold is already in these units, so findLowSpans
+  // below compares like with like -- dividing the threshold here as well would
+  // divide by L twice and move every boundary.
+  for (double& value : report.dexterityProfile) {
+    value /= length;
+  }
 
   if (!report.dexterityProfile.empty()) {
     const auto worstIt =

@@ -53,6 +53,19 @@ std::optional<double> dexterityMargin(const Robot& robot,
   return *std::min_element(profile.begin(), profile.end());
 }
 
+double characteristicLength(const Robot& robot) {
+  // Walk the base->tip chain and sum the link lengths. The tip link's offset is
+  // the final fixed hop (e.g. hand -> grasp frame); each joint's originTransform
+  // is the hop from the previous movable joint, with fixed joints already folded
+  // in. Summed once, from the robot alone -- no configuration enters here.
+  double length = robot.link(robot.tipLinkIndex()).offset.translation().norm();
+  for (int j = robot.link(robot.tipLinkIndex()).supportingJoint; j >= 0;
+       j = robot.joint(j).parentJoint) {
+    length += robot.joint(j).originTransform.translation().norm();
+  }
+  return length;
+}
+
 namespace {
 
 // Largest Jacobian rank over a sample of the trajectory's configurations. Rank
