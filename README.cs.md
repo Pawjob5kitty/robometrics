@@ -30,18 +30,19 @@ cmake --preset release && cmake --build --preset release
 Report je jeden řádek na rollout, na stdout nebo do `--out`:
 
 ```csv
-file,dofs,steps,success,dexterity_margin,path_efficiency,low_dex_spans,worst_at
-demo_001.csv,7,412,1,0.184,0.981,0,203
-demo_042.csv,7,388,1,0.121,0.947,1,341
+file,dofs,steps,success,dexterity_norm,path_efficiency,low_dex_spans,worst_at
+demo_001.csv,7,412,1,0.140,0.981,0,203
+demo_042.csv,7,388,1,0.031,0.947,1,341
 ```
 
 Souhrn a lokalizace každého úseku nízké obratnosti jde na stderr:
 
 ```
+characteristic length: 1.319 m (computed from URDF)
 skipping demo_017.csv: demo_017.csv:88: expected 8 fields (t plus 7 joint values), found 7
 demo_042.csv: 1 low-dexterity span  [338..361 worst 0.031]
 50 rollouts, 49 ok, 1 failed to parse
-dexterity margin:   median 0.141   p05 0.092   min 0.072
+dexterity (norm):   median 0.107   p05 0.070   min 0.054
 path efficiency:    median 0.981   p05 0.956   min 0.932
 0 rollouts (0%) have at least one low-dexterity span
 ```
@@ -50,38 +51,48 @@ Rollout, který se nepodaří načíst, se přeskočí, běh nesestřelí; návr
 0, když prošel aspoň jeden, jinak nenulový. Spany na stderr jsou **inkluzivní**
 (`[338..361]` = kroky 338 až 361), zatímco `Span::begin/end` v C++ je
 půlotevřený. `--profile-out` vypíše `step,t,dexterity` na krok do samostatného
-CSV pro každý rollout, ke kreslení grafů.
+CSV pro každý rollout, ke kreslení grafů. Obratnost je normalizovaná
+charakteristickou délkou robota L — součtem délek článků z URDF, vypsaným na
+stderr jako výše; přepínačem `--char-length` ji lze přebít, když geometrii URDF
+nelze věřit.
 
 ## Co měří
 
-- **`dexterityMargin`** — nejmenší singulární číslo translační části Jacobiánu
+- **`dexterity_norm`** — nejmenší singulární číslo translační části Jacobiánu
   v nejhorším kroku trajektorie: kolik metrů za sekundu pohybu tipu koupí
   jednotka kloubové rychlosti v nejméně citlivém směru. Nula znamená zamčený
-  směr (singularita). Je to *obratnost*, ne bezpečnost (neví nic o kontaktu ani
+  směr (singularita). Tato surová hodnota se pak vydělí charakteristickou délkou
+  robota L — součtem délek článků z URDF — takže hlášené číslo je bezrozměrné:
+  σ_min vydělené velikostí robota, aby stejná rezerva znamenala totéž na ramenou
+  různého dosahu. Je to *obratnost*, ne bezpečnost (neví nic o kontaktu ani
   o zátěži) a ne mobilita (je to vlastnost konfigurace, ne mechanismu). Podle
   Yoshikawy (1985); nejkratší poloosa je z Klein a Blaho (1987).
-- **`pathEfficiency`** — poměr minimálního kloubového pohybu, který by vyrobil
+- **`path_efficiency`** — poměr minimálního kloubového pohybu, který by vyrobil
   zaznamenanou dráhu tipu, ke skutečně vynaloženému kloubovému pohybu, v
   `(0, 1]`. Měří plýtvání v prostoru kloubů: pohyb, který kloubem otočil, ale
-  tipem nehnul.
+  tipem nehnul. Je **N/A** (prázdný sloupec) pro neredundantního robota, kde by
+  poměr byl kvůli chybějícímu nullspace konstantní 1, a pro rameno mísící rotační
+  a posuvné klouby, kde by `‖Δq‖` sčítalo radiány a metry; CLI řekne, který důvod
+  platí.
 
 ## Výsledek na LIBERO-Spatial
 
 Spuštěno na celém `libero_spatial` — 10 úloh × 50 lidských teleoperačních
 demonstrací, 500 rolloutů, 62 250 kroků — na Franka Panda (7-DOF rameno,
-prstové klouby zafixované). Analýza 500 rolloutů trvá **0,7 s na jednom jádru
-CPU** (~5 MB špička); převod 6 GB HDF5 předtím zabere zhruba 1,5 s.
+prstové klouby zafixované, charakteristická délka 1.319 m). Analýza 500 rolloutů
+trvá **0,7 s na jednom jádru CPU** (~5 MB špička); převod 6 GB HDF5 předtím
+zabere zhruba 1,5 s.
 
 ```
-                              medián   min      rozsah
-dexterity_margin (m/rad)      0.141    0.072    0.072 .. 0.195
-path_efficiency               0.981    0.932    0.932 .. 0.999
-úseky nízké obratnosti (< 0.05)   0 z 500 rolloutů
+                                    medián   min      rozsah
+dexterity_norm (bezrozměrné)        0.107    0.054    0.054 .. 0.148
+path_efficiency                     0.981    0.932    0.932 .. 0.999
+úseky nízké obratnosti (norm < 0.038)   0 z 500 rolloutů
 ```
 
-Mediány po úlohách jsou v úzkém pásmu — obratnost 0.116 až 0.176, efektivita
-0.973 až 0.988 — a žádný rollout v celé sadě neklesne pod práh obratnosti 0.05
-ani nepřeleze efektivitu 1.0.
+Mediány po úlohách jsou v úzkém pásmu — obratnost 0.088 až 0.133, efektivita
+0.973 až 0.988 — a žádný rollout v celé sadě neklesne pod normalizovaný práh
+obratnosti 0.038 ani nepřeleze efektivitu 1.0.
 
 **Ber to jako zjištění o datasetu, ne o nástroji.** `libero_spatial` je z
 konstrukce homogenní: deset variant téhož pick-and-place, samá lidská
@@ -97,32 +108,40 @@ Všechny metriky jsou **kinematické** — počítají se z `q` a z URDF, nic v�
 Konkrétně:
 
 - **Nic o kontaktu.** Síly, tření, uchopení, jestli robot něco upustil nebo
-  rozdrtil. Vysoká `dexterityMargin` neříká nic o skleničce v chapadle.
+  rozdrtil. Vysoká `dexterity_norm` neříká nic o skleničce v chapadle.
 - **Nic o percepci.** Kamery, segmentace, jestli politika viděla správný objekt.
 - **Nic o dynamice.** Momenty, setrvačnost, gravitace, jestli je pohyb vůbec
   proveditelný v rámci momentových limitů.
 - **Nic o splnění úlohy.** `success` se jen přenáší ze vstupního souboru; tahle
   knihovna ho nikdy nevyhodnocuje.
 - **Nic o kolizích.** Kolizní geometrie z URDF se přeskakuje.
-- **Neporovnává napříč roboty.** Prahy i hodnoty škálují s velikostí robota
-  (viz níže).
+- **Porovnání napříč roboty jen do té míry, jak se dá věřit URDF.**
+  `dexterity_norm` i `path_efficiency` jsou z návrhu bezrozměrné, takže jsou
+  určené k porovnávání napříč roboty — ale normalizace obratnosti je jen tak
+  dobrá jako charakteristická délka načtená z URDF (viz Známé mezery).
 
 ## Známé mezery
 
-- `log(T)` neošetřuje `θ → π`. Osa se získává z antisymetrické části `R`, která
-  tam mizí; oprava vede přes symetrickou část (`R + I == 2·n·nᵀ`), viz komentář
-  v `src/se3.cpp`. Testy se tomu vyhýbají omezením každé složky `omega` na 1.8.
-- **`pathEfficiency` je 1 pro každého neredundantního robota.** Podmínka je
-  `numDofs() > rank(J)`, ne „víc kloubů než rozměrů úlohy" — rovinné rameno má
-  `rank(J) ≤ 3` bez ohledu na počet kloubů, takže planar 3R redundantní *není*.
-  Znamená to 7-DOF Franka ano, 6-DOF UR ne; CLI na to varuje na stderr.
-- **Práh obratnosti škáluje s velikostí robota.** `σ_min` je v m/rad, tedy
-  úměrné dosahu. Výchozí `0.05` je kalibrované na Frankovu škálu (~0.85 m); na
-  menším rameni označí skoro všechno, na větším skoro nic. Zásadové řešení je
-  normalizovat charakteristickou délkou z URDF.
-- **`‖Δq‖` míchá radiány s metry** u ramene s rotačními i posuvnými klouby.
-  Čitatel i jmenovatel `pathEfficiency` nesou stejnou vadu, takže poměr je míň
-  špatný než každá půlka, ale správný není.
+- **`dexterity_norm` je popis, ne predikce.** Je nekalibrovaná. Nízká hodnota
+  značí konfiguraci blízko kinematické singularity, ale nic v této knihovně
+  neprokazuje, že nízká hodnota předpovídá selhání úlohy nebo že vysoká
+  předpovídá úspěch. Ber ji jako *kde rameno pracovalo nejtíž*, ne jako známku
+  toho, jestli byla politika dobrá — korelace s výsledky je neměřená a musela by
+  se ukázat, ne předpokládat.
+- **Normalizace je jen tak dobrá jako URDF.** `dexterity_norm` dělí `σ_min`
+  charakteristickou délkou L — součtem délek článků podél řetěze báze→tip. URDF
+  s chybějícími, nulovými nebo nesmyslnými délkami článků dá špatnou (nebo
+  nulovou) L a každé číslo obratnosti tu chybu tiše zdědí. `--char-length` L
+  přebije, když geometrii nelze věřit. (Právě tahle normalizace dělá práh
+  bezrozměrným a nezávislým na robotovi, místo starého `0.05 m/rad` závislého na
+  dosahu.)
+- **`path_efficiency` potřebuje redundantní rameno s jednotným typem kloubů;
+  jinak je N/A.** Redundance je `numDofs() > rank(J)`, ne „víc kloubů než rozměrů
+  úlohy" — rovinné rameno má `rank(J) ≤ 3` bez ohledu na počet kloubů, takže
+  planar 3R redundantní není a 6-DOF UR dostane N/A, zatímco 7-DOF Franka ne. Je
+  N/A i pro rameno mísící rotační a posuvné klouby, kde by `‖Δq‖` sčítalo radiány
+  a metry. Obojí vrátí prázdný sloupec s důvodem na stderr, místo zavádějící
+  konstantní 1 nebo poměru ve smíšených jednotkách, které vracelo dřív.
 - Řetězené `mimic` klouby (mimic, jehož zdroj je sám mimic) jsou odmítnuté;
   jednoúrovňové fungují.
 - `planar` a `floating` klouby jsou odmítnuté jako vícedimenzionální.
@@ -177,7 +196,7 @@ cmake --preset release      && cmake --build --preset release      && ctest --pr
 cmake --preset debug-asan   && cmake --build --preset debug-asan   && ctest --preset debug-asan
 ```
 
-Testy jsou property i unit, přes doctest a rapidcheck: 148 case, 630 assertions.
+Testy jsou property i unit, přes doctest a rapidcheck: 163 case, 771 assertions.
 Formát kontroluje `clang-format 21.1.8`.
 
 ## Licence
