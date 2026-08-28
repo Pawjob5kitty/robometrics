@@ -304,19 +304,12 @@ TEST_CASE("efficiency never exceeds 1 on a redundant arm") {
   CHECK(*e <= 1.0);
 }
 
-TEST_CASE("a non-redundant arm always scores exactly 1") {
-  // The limitation from the header, as an executable fact. Both of these arms
-  // have an empty null space, so the recorded motion IS the minimum-norm one
-  // and no trajectory can score below 1 -- however clumsy the policy was.
-  //
-  // Read as: a 1.0 from a robot like this is a statement about the mechanism,
-  // not about the policy.
-  //
-  // The residual deviation is discretisation, not a defect: dx is a finite
-  // difference between two poses while J is the derivative at the start of the
-  // step, so the two agree only to first order. The second half of this test
-  // pins that down by showing the deviation SHRINKS when the same path is
-  // sampled more finely. A real error in the formula would not do that.
+TEST_CASE("a non-redundant arm yields no efficiency but keeps dexterity") {
+  // The behaviour change: on a robot with no null space the min-norm motion IS
+  // the actual one, so the ratio would be 1 for any trajectory however clumsy.
+  // Rather than return that misleading 1, pathEfficiency now returns nullopt
+  // with reason NotRedundant -- while dexterity, which does not need redundancy,
+  // still returns a value. Catches a redundancy check that is inverted or off.
   const robometrics::Robot r3 = robometrics::Robot::fromUrdfFile(fixture("planar_3r.urdf"));
   const robometrics::Robot r2 = robometrics::Robot::fromUrdfFile(fixture("planar_arm.urdf"));
 
@@ -330,20 +323,16 @@ TEST_CASE("a non-redundant arm always scores exactly 1") {
     q << 0.7 * u, 0.9 - 0.5 * u;
     return q;
   };
+  const std::vector<Eigen::VectorXd> t3 = sampleTrajectory(50, path3);
+  const std::vector<Eigen::VectorXd> t2 = sampleTrajectory(50, path2);
 
-  const std::optional<double> e3 = robometrics::pathEfficiency(r3, sampleTrajectory(2000, path3));
-  const std::optional<double> e2 = robometrics::pathEfficiency(r2, sampleTrajectory(2000, path2));
-  REQUIRE(e3.has_value());
-  REQUIRE(e2.has_value());
-  CHECK(*e3 == doctest::Approx(1.0).epsilon(1e-3));
-  CHECK(*e2 == doctest::Approx(1.0).epsilon(1e-3));
-
-  // Refining the sampling must move the answer closer to 1.
-  const double coarse =
-      std::fabs(*robometrics::pathEfficiency(r3, sampleTrajectory(250, path3)) - 1.0);
-  const double fine =
-      std::fabs(*robometrics::pathEfficiency(r3, sampleTrajectory(1000, path3)) - 1.0);
-  CHECK(fine < coarse);
+  CHECK(robometrics::efficiencyStatus(r3, t3) == robometrics::EfficiencyStatus::NotRedundant);
+  CHECK(robometrics::efficiencyStatus(r2, t2) == robometrics::EfficiencyStatus::NotRedundant);
+  CHECK_FALSE(robometrics::pathEfficiency(r3, t3).has_value());
+  CHECK_FALSE(robometrics::pathEfficiency(r2, t2).has_value());
+  // The robot is not rejected -- only the one metric is.
+  CHECK(robometrics::dexterityMargin(r3, t3).has_value());
+  CHECK(robometrics::dexterityMargin(r2, t2).has_value());
 }
 
 TEST_CASE("wasted joint motion lowers the efficiency") {
@@ -486,9 +475,32 @@ TEST_CASE("the midpoint rule converges faster than sampling at the step start") 
     return opt / act;
   };
 
-  auto midpointError = [&](int n) {
-    return std::fabs(*robometrics::pathEfficiency(robot, sampleTrajectory(n, path)) - 1.0);
+  // Midpoint sampling, also inline: pathEfficiency now returns nullopt for a
+  // non-redundant robot, so the ratio is computed directly here to keep using
+  // planar_3r (where the true E is exactly 1) as the discretisation ruler.
+  auto efficiencyAtMid = [&](int n) {
+    const std::vector<Eigen::VectorXd> traj = sampleTrajectory(n, path);
+    double opt = 0.0;
+    double act = 0.0;
+    for (std::size_t i = 1; i < traj.size(); ++i) {
+      const Eigen::VectorXd& a = traj[i - 1];
+      const Eigen::VectorXd& b = traj[i];
+      const Eigen::VectorXd mid = 0.5 * (a + b);
+      act += (b - a).norm();
+      const robometrics::SE3 ta = robometrics::forwardKinematics(robot, a);
+      const robometrics::SE3 tb = robometrics::forwardKinematics(robot, b);
+      const robometrics::SE3 tm = robometrics::forwardKinematics(robot, mid);
+      const robometrics::SE3 rotOnly(tm.rotation(), robometrics::Vec3::Zero());
+      const robometrics::Vec6 dx =
+          robometrics::adjoint(rotOnly) * robometrics::log(ta.inverse() * tb);
+      const Eigen::MatrixXd J = robometrics::jacobian(robot, mid);
+      Eigen::JacobiSVD<Eigen::MatrixXd> svd(J, Eigen::ComputeThinU | Eigen::ComputeThinV);
+      const Eigen::VectorXd rhs = dx;
+      opt += svd.solve(rhs).norm();
+    }
+    return opt / act;
   };
+  auto midpointError = [&](int n) { return std::fabs(efficiencyAtMid(n) - 1.0); };
   auto startError = [&](int n) { return std::fabs(efficiencyAtStart(n) - 1.0); };
 
   const double midCoarse = midpointError(100);
@@ -511,4 +523,61 @@ TEST_CASE("the midpoint rule converges faster than sampling at the step start") 
   // And it is not merely faster-converging but far more accurate at the same
   // sampling: orders of magnitude, not percent.
   CHECK(midCoarse < startCoarse / 100.0);
+}
+
+// ---------------------------------------------------------------------------
+// pathEfficiency applicability (hardening part 2)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("efficiencyStatus distinguishes redundancy from mixed joint types") {
+  // The classifier, pinned directly. Three robots, three verdicts:
+  //   planar_4r   redundant, all revolute       -> Available
+  //   planar_arm  not redundant, all revolute   -> NotRedundant
+  //   mixed_joints prismatic + revolute         -> MixedJointTypes
+  // Catches an inverted redundancy test (Available <-> NotRedundant) and an
+  // AND/OR slip in the mixed-type test (a purely rotary arm wrongly flagged).
+  using robometrics::EfficiencyStatus;
+  auto traj = [](const robometrics::Robot& r) {
+    std::vector<Eigen::VectorXd> t;
+    for (int i = 0; i < 12; ++i) {
+      Eigen::VectorXd q(r.numDofs());
+      for (int j = 0; j < r.numDofs(); ++j) {
+        q(j) = 0.1 * i + 0.05 * j;
+      }
+      t.push_back(q);
+    }
+    return t;
+  };
+
+  const robometrics::Robot r4 = robometrics::Robot::fromUrdfFile(fixture("planar_4r.urdf"));
+  const robometrics::Robot r2 = robometrics::Robot::fromUrdfFile(fixture("planar_arm.urdf"));
+  const robometrics::Robot rm = robometrics::Robot::fromUrdfFile(fixture("mixed_joints.urdf"));
+
+  CHECK(robometrics::efficiencyStatus(r4, traj(r4)) == EfficiencyStatus::Available);
+  CHECK(robometrics::efficiencyStatus(r2, traj(r2)) == EfficiencyStatus::NotRedundant);
+  CHECK(robometrics::efficiencyStatus(rm, traj(rm)) == EfficiencyStatus::MixedJointTypes);
+
+  // And the value/nullopt follows the verdict.
+  CHECK(robometrics::pathEfficiency(r4, traj(r4)).has_value());
+  CHECK_FALSE(robometrics::pathEfficiency(r2, traj(r2)).has_value());
+  CHECK_FALSE(robometrics::pathEfficiency(rm, traj(rm)).has_value());
+}
+
+TEST_CASE("a mixed-joint robot yields no efficiency but keeps dexterity") {
+  // ||dq|| would add metres (the prismatic slide) and radians (the revolute
+  // turn) into one sum, so the efficiency ratio is not a physical quantity and
+  // is refused. Dexterity, which never sums joint coordinates, is unaffected.
+  // Catches a mixed-type check that only looks at one joint kind.
+  const robometrics::Robot robot = robometrics::Robot::fromUrdfFile(fixture("mixed_joints.urdf"));
+  std::vector<Eigen::VectorXd> traj;
+  for (int i = 0; i < 20; ++i) {
+    Eigen::VectorXd q(2);
+    q << 0.02 * i, 0.05 * i;  // slide in metres, turn in radians
+    traj.push_back(q);
+  }
+
+  CHECK(robometrics::efficiencyStatus(robot, traj) ==
+        robometrics::EfficiencyStatus::MixedJointTypes);
+  CHECK_FALSE(robometrics::pathEfficiency(robot, traj).has_value());
+  CHECK(robometrics::dexterityMargin(robot, traj).has_value());
 }

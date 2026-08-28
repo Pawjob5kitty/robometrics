@@ -103,6 +103,25 @@ std::vector<double> sigmaMinProfile(const Robot& robot, const std::vector<Eigen:
 /// Post: std::nullopt when traj is empty; otherwise a value >= 0.
 std::optional<double> dexterityMargin(const Robot& robot, const std::vector<Eigen::VectorXd>& traj);
 
+/// Whether pathEfficiency can return a meaningful value for a robot, and if not,
+/// why. The two reasons are one-shot properties of the robot (its joint types
+/// and its Jacobian rank), not of any single step, and they are distinguished
+/// so a caller can report which one fired rather than a bare "N/A".
+enum class EfficiencyStatus {
+  Available,        ///< the ratio is meaningful; pathEfficiency returns a value
+  NotRedundant,     ///< numDofs() <= rank(J): the ratio is 1 by construction and
+                    ///< says nothing about the policy (see pathEfficiency (1))
+  MixedJointTypes,  ///< both rotary and prismatic joints: ||dq|| would add
+                    ///< radians and metres (see pathEfficiency (3))
+};
+
+/// Classifies a robot for pathEfficiency. One-shot: mixed joint types come
+/// straight from the joint types; redundancy from the largest Jacobian rank over
+/// a sample of `traj` (a single pose may be singular, so the maximum is taken).
+/// MixedJointTypes takes precedence when both apply, because a mixed arm's ratio
+/// is undefined regardless of redundancy. An empty `traj` skips the rank test.
+EfficiencyStatus efficiencyStatus(const Robot& robot, const std::vector<Eigen::VectorXd>& traj);
+
 /// Path efficiency: how much of the joint motion in a rollout actually moved
 /// the end-effector.
 ///
@@ -122,11 +141,13 @@ std::optional<double> dexterityMargin(const Robot& robot, const std::vector<Eige
 ///
 /// READ THIS BEFORE TRUSTING A 1.0.
 ///
-/// (1) A NON-REDUNDANT ROBOT ALWAYS SCORES 1. The condition for this metric to
-///     say anything is numDofs() > rank(J). Without a null space, J*dq = dx has
-///     a unique solution, the minimum-norm solution IS the actual one, and the
-///     ratio is 1 for every trajectory however clumsy. So it says something
-///     about a 7-DOF Franka and NOTHING about a 6-DOF UR.
+/// (1) REQUIRES A REDUNDANT ROBOT. The metric only says something when
+///     numDofs() > rank(J). Without a null space, J*dq = dx has a unique
+///     solution, the minimum-norm solution IS the actual one, and the ratio is
+///     1 for every trajectory however clumsy -- a number about the mechanism,
+///     not the policy. Rather than return that misleading 1, pathEfficiency
+///     returns std::nullopt here (reason NotRedundant); efficiencyStatus()
+///     reports which.
 ///
 ///     Count rank(J), not joints. rank(J) is bounded by the number of twist
 ///     components the mechanism can produce, which can be well below 6: a
@@ -140,13 +161,14 @@ std::optional<double> dexterityMargin(const Robot& robot, const std::vector<Eige
 ///     straight line would do can score a perfect 1.0. This measures
 ///     joint-space waste, not task-space waste.
 ///
-/// (3) DIMENSIONAL TRAP, KNOWN AND NOT FIXED. ||q[i] - q[i-1]|| adds radians and
-///     metres in quadrature whenever the robot mixes revolute and prismatic
-///     joints. Numerator and denominator carry the same defect so the ratio is
-///     less wrong than either half, but it is not right, and it is not
-///     comparable between robots of different joint composition. The fix is a
-///     weighting matrix W and norms ||W * dq||, which changes what the metric
-///     MEANS rather than fixing a bug.
+/// (3) MIXED JOINT TYPES ARE REJECTED. ||q[i] - q[i-1]|| would add radians and
+///     metres in quadrature for a robot with both revolute/continuous and
+///     prismatic joints, so the sum is not a physical quantity. Rather than
+///     return a number built on that, pathEfficiency returns std::nullopt
+///     (reason MixedJointTypes). A future weighting matrix W with norms
+///     ||W * dq|| would define it, but that changes what the metric MEANS and
+///     is out of scope. A uniform-joint-type arm (every joint revolute, or
+///     every joint prismatic) has no such problem and is accepted.
 ///
 /// (4) dx is a FINITE DIFFERENCE between two recorded poses; J is a DERIVATIVE.
 ///     Pairing them is a quadrature rule, so the result carries a
@@ -168,8 +190,9 @@ std::optional<double> dexterityMargin(const Robot& robot, const std::vector<Eige
 ///     longer partly cancel.
 ///
 /// Pre:  every entry of traj has length robot.numDofs().
-/// Post: std::nullopt when traj has fewer than two points, or when the robot
-///       never moved; otherwise a value > 0.
+/// Post: std::nullopt when the metric would not be meaningful -- fewer than two
+///       points, the robot never moved, or efficiencyStatus(robot, traj) is not
+///       Available (see (1) and (3)); otherwise a value > 0.
 ///
 /// "Never moved" is tested exactly, not against a threshold: any epsilon would
 /// have to be in the mixed units of (3), so there is no defensible value.

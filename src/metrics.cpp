@@ -53,10 +53,74 @@ std::optional<double> dexterityMargin(const Robot& robot,
   return *std::min_element(profile.begin(), profile.end());
 }
 
+namespace {
+
+// Largest Jacobian rank over a sample of the trajectory's configurations. Rank
+// has to be measured, not counted from joints -- it is bounded by the twist
+// components the mechanism can produce (<= 3 for a planar arm). A single pose
+// can be singular, so the maximum over a stride of ~16 configurations is taken.
+Eigen::Index sampledMaxRank(const Robot& robot, const std::vector<Eigen::VectorXd>& traj) {
+  constexpr std::size_t kSamples = 16;
+  const std::size_t stride = std::max<std::size_t>(1, traj.size() / kSamples);
+  Eigen::Index best = 0;
+  for (std::size_t i = 0; i < traj.size(); i += stride) {
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(jacobian(robot, traj[i]));
+    // A tolerance is unavoidable: rank is discontinuous and floating point never
+    // returns an exact zero. 1e-9 sits far below any singular value a real
+    // mechanism produces and far above rounding noise.
+    svd.setThreshold(1e-9);
+    best = std::max(best, svd.rank());
+  }
+  return best;
+}
+
+}  // namespace
+
+EfficiencyStatus efficiencyStatus(const Robot& robot, const std::vector<Eigen::VectorXd>& traj) {
+  // Mixed types first: a ratio of a radians-plus-metres sum is undefined
+  // regardless of redundancy, so it dominates.
+  bool hasRotary = false;
+  bool hasPrismatic = false;
+  for (int i = 0; i < robot.numJoints(); ++i) {
+    switch (robot.joint(i).type) {
+      case JointType::Revolute:
+      case JointType::Continuous:
+        hasRotary = true;
+        break;
+      case JointType::Prismatic:
+        hasPrismatic = true;
+        break;
+      case JointType::Fixed:
+        break;
+    }
+  }
+  if (hasRotary && hasPrismatic) {
+    return EfficiencyStatus::MixedJointTypes;
+  }
+
+  // Redundancy: without a null space the minimum-norm solution is the actual
+  // one, so the ratio is 1 for every trajectory and measures nothing. An empty
+  // traj gives no configuration to measure rank at, so it cannot be classified
+  // here and is left to the other guards.
+  if (!traj.empty() && static_cast<Eigen::Index>(robot.numDofs()) <= sampledMaxRank(robot, traj)) {
+    return EfficiencyStatus::NotRedundant;
+  }
+  return EfficiencyStatus::Available;
+}
+
 std::optional<double> pathEfficiency(const Robot& robot, const std::vector<Eigen::VectorXd>& traj) {
   // A single point has no steps, so there is nothing to be efficient at. Not
   // "efficiency 1" -- that would claim the rollout was perfect.
   if (traj.size() < 2) {
+    return std::nullopt;
+  }
+
+  // One-shot applicability: refuse the number when it would be 1 by construction
+  // (not redundant) or built on a mixed-unit sum (both joint kinds), rather than
+  // return a misleading value. The caller can query efficiencyStatus() to say
+  // which. Dexterity and everything else are unaffected -- this rejects the
+  // computation, not the robot.
+  if (efficiencyStatus(robot, traj) != EfficiencyStatus::Available) {
     return std::nullopt;
   }
 

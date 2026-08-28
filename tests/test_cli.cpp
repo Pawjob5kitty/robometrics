@@ -593,3 +593,58 @@ TEST_CASE("the redundancy probe takes the maximum rank, not the rank at one pose
   CHECK(r.err.find("3 dofs") != std::string::npos);
   CHECK(r.err.find("rank 3") != std::string::npos);
 }
+
+TEST_CASE("a mixed-joint robot leaves path_efficiency empty but fills the rest") {
+  // End-to-end: efficiency is N/A (empty column) for a prismatic+revolute robot,
+  // while dofs/steps/dexterity/spans are all produced. stderr states the reason
+  // and the summary counts the N/A rollouts. Catches a change that either drops
+  // the whole robot or prints a bogus efficiency number.
+  const TempDir dir;
+  const std::string input = dir.write("mixed.csv", rolloutText(ramp(20, 0.0, 0.6), 1));
+
+  const Run r = run({"analyze", "--urdf", fixture("mixed_joints.urdf"), input});
+  CHECK(r.code == 0);
+
+  const std::vector<std::string> csv = lines(r.out);
+  REQUIRE(csv.size() == 2);
+  std::vector<std::string> fields;
+  std::istringstream row(csv[1]);
+  std::string field;
+  while (std::getline(row, field, ',')) {
+    fields.push_back(field);
+  }
+  REQUIRE(fields.size() == 8);
+  CHECK(fields[5].empty());        // path_efficiency: N/A
+  CHECK_FALSE(fields[4].empty());  // dexterity_margin: present
+
+  // The reason is stated on stderr, distinct from "not redundant".
+  CHECK(r.err.find("revolute and prismatic") != std::string::npos);
+  CHECK(r.err.find("mixed joint types") != std::string::npos);
+}
+
+TEST_CASE("a non-redundant robot's efficiency N/A is reported with its own reason") {
+  // The other reason, kept distinguishable from mixed joint types: planar_arm is
+  // 2R (not redundant), so efficiency is N/A "robot not redundant". Catches the
+  // two reasons being collapsed into one message.
+  const TempDir dir;
+  const std::string input = dir.write("nr.csv", rolloutText(ramp(20, 1.2, 1.4), 1));
+
+  const Run r = run({"analyze", "--urdf", fixture("planar_arm.urdf"), input});
+  CHECK(r.code == 0);
+
+  const std::vector<std::string> csv = lines(r.out);
+  REQUIRE(csv.size() == 2);
+  std::vector<std::string> fields;
+  std::istringstream row(csv[1]);
+  std::string field;
+  while (std::getline(row, field, ',')) {
+    fields.push_back(field);
+  }
+  REQUIRE(fields.size() == 8);
+  CHECK(fields[5].empty());        // path_efficiency: N/A
+  CHECK_FALSE(fields[4].empty());  // dexterity_margin: present
+
+  CHECK(r.err.find("not redundant") != std::string::npos);
+  CHECK(r.err.find("robot not redundant") != std::string::npos);  // summary line
+  CHECK(r.err.find("revolute and prismatic") == std::string::npos);
+}

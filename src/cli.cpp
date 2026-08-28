@@ -13,6 +13,7 @@
 #include <Eigen/SVD>
 
 #include "robometrics/jacobian.hpp"
+#include "robometrics/metrics.hpp"
 #include "robometrics/report.hpp"
 #include "robometrics/rollout.hpp"
 #include "robometrics/urdf.hpp"
@@ -315,8 +316,10 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
 
   std::size_t ok = 0;
   std::size_t failed = 0;
-  bool redundancyChecked = false;
+  bool efficiencyChecked = false;
+  EfficiencyStatus robotEfficiency = EfficiencyStatus::Available;
   std::size_t withSpans = 0;
+  std::size_t efficiencyNA = 0;  // ok rollouts whose path_efficiency is N/A
   std::vector<double> margins;
   std::vector<double> efficiencies;
 
@@ -335,19 +338,27 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     }
     ++ok;
 
-    // Said once, because a reader who does not know this draws exactly the
-    // wrong conclusion: without a null space the minimum-norm motion IS the
-    // actual one, so path_efficiency is 1 for every rollout however clumsy. A
-    // column of 1.000 looks like a flawless policy and is a statement about the
-    // mechanism.
-    if (!redundancyChecked) {
-      redundancyChecked = true;
-      const Eigen::Index rank = maxJacobianRank(*robot, rollout);
-      if (static_cast<Eigen::Index>(robot->numDofs()) <= rank) {
-        err << "warning: robot '" << robot->name() << "' is not redundant (" << robot->numDofs()
-            << " dofs, Jacobian rank " << rank
-            << "), so path_efficiency is 1 for every rollout and says nothing about the "
-               "policy\n";
+    // path_efficiency applies only to a redundant, uniform-joint-type robot;
+    // otherwise the metric returns N/A rather than a misleading number (a
+    // constant 1, or a mixed-unit ratio). This is a property of the robot, so it
+    // is decided once and the reason is stated for the whole run.
+    if (!efficiencyChecked) {
+      efficiencyChecked = true;
+      robotEfficiency = efficiencyStatus(*robot, rollout.q);
+      switch (robotEfficiency) {
+        case EfficiencyStatus::NotRedundant:
+          err << "warning: robot '" << robot->name() << "' is not redundant (" << robot->numDofs()
+              << " dofs, Jacobian rank " << maxJacobianRank(*robot, rollout)
+              << "), so path_efficiency is N/A for every rollout -- the minimum-norm motion is "
+                 "the actual one, so the ratio would be 1 and say nothing about the policy\n";
+          break;
+        case EfficiencyStatus::MixedJointTypes:
+          err << "warning: robot '" << robot->name()
+              << "' has both revolute and prismatic joints, so path_efficiency is N/A for "
+                 "every rollout -- ||dq|| would add radians and metres into one sum\n";
+          break;
+        case EfficiencyStatus::Available:
+          break;
       }
     }
 
@@ -364,6 +375,8 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     }
     if (report.pathEfficiency.has_value()) {
       efficiencies.push_back(*report.pathEfficiency);
+    } else {
+      ++efficiencyNA;
     }
     if (!report.lowDexteritySpans.empty()) {
       ++withSpans;
@@ -398,7 +411,27 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
   err << total << " rollout" << (total == 1 ? "" : "s") << ", " << ok << " ok, " << failed
       << " failed to parse\n";
   printStat(err, "dexterity margin: ", margins);
-  printStat(err, "path efficiency:  ", efficiencies);
+  // Skip the bare "no values" line when every efficiency is N/A: the reason line
+  // below says the same thing and more. Still print it when some values exist.
+  if (!efficiencies.empty() || efficiencyNA == 0) {
+    printStat(err, "path efficiency:  ", efficiencies);
+  }
+  if (efficiencyNA > 0) {
+    err << "path efficiency:   N/A for " << efficiencyNA << " of " << ok << " rollout"
+        << (ok == 1 ? "" : "s") << " (";
+    switch (robotEfficiency) {
+      case EfficiencyStatus::NotRedundant:
+        err << "robot not redundant";
+        break;
+      case EfficiencyStatus::MixedJointTypes:
+        err << "mixed joint types";
+        break;
+      case EfficiencyStatus::Available:
+        err << "trajectory too short or motionless";
+        break;
+    }
+    err << ")\n";
+  }
   if (ok > 0) {
     const double percent = 100.0 * static_cast<double>(withSpans) / static_cast<double>(ok);
     err << withSpans << " rollout" << (withSpans == 1 ? "" : "s") << " ("
