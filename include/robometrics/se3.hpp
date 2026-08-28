@@ -134,9 +134,10 @@ SE3 exp(const Vec6& twist);
 ///       angle wraps and the identity fails -- a property of exp, which is not
 ///       injective, not an implementation defect.
 ///
-/// SINGULARITY AT pi, NOT HANDLED: the axis is recovered from the
-/// antisymmetric part of R, which vanishes as the angle approaches pi. See the
-/// implementation for what the fix would be.
+/// The singularity at pi is handled: the general axis extraction uses the
+/// antisymmetric part of R, which vanishes there, so within a threshold of pi
+/// the axis is taken from the symmetric part (R + I == 2*n*n^T) and its sign
+/// recovered from the antisymmetric part. See the implementation.
 Vec6 log(const SE3& T);
 
 /// Adjoint -- the linear map that carries a twist from one frame to another.

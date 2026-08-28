@@ -154,7 +154,7 @@ SE3 exp(const Vec6& x) {
 // ||omega|| <= pi and log(exp(x)) == x holds only for ||omega|| < pi. That is a
 // property of the map, not a defect.
 //
-// THREE numerical traps. Two are handled below; the third is not.
+// THREE numerical traps, all handled below.
 //
 //   (a) theta -> 0. `sin(theta)` in the axis step and `tan(theta/2)` in the
 //       translation step both drive divisions towards 0/0. Handled by the
@@ -168,15 +168,13 @@ SE3 exp(const Vec6& x) {
 //       is not defensive padding, it is the projection back onto the domain the
 //       input was supposed to be in.
 //
-//   (c) theta -> pi. NOT HANDLED. As theta approaches pi, sin(theta) -> 0 and
-//       R - R^T -> 0 together, so the axis step becomes 0/0 with no
-//       cancellation-free reformulation: the antisymmetric part simply stops
-//       carrying the axis. At exactly pi the axis is determined only up to
-//       sign. The standard fix reads it out of the SYMMETRIC part instead --
-//       R + I == 2*n*n^T at theta == pi, so the axis comes from the largest
-//       diagonal entry with the sign fixed by convention. Until that branch
-//       exists, log() returns garbage for rotations near half a turn. The tests
-//       do not reach it: they bound each omega component by 1.8.
+//   (c) theta -> pi. As theta approaches pi, sin(theta) -> 0 and R - R^T -> 0
+//       together, so the general axis step becomes 0/0 and the antisymmetric
+//       part stops carrying the axis. The near-pi branch reads the axis from
+//       the SYMMETRIC part instead (R + I == 2*n*n^T at pi), then recovers its
+//       sign from the still-directional antisymmetric part; see the derivation
+//       at the branch. The translation step needs no special case: at pi,
+//       (theta/2)*cot(theta/2) -> 0, so V^-1's coefficient c stays finite.
 Vec6 log(const SE3& T) {
   const Mat3& R = T.rotation();
   const Vec3& t = T.translation();
@@ -186,18 +184,74 @@ Vec6 log(const SE3& T) {
   const double theta = std::acos(cosTheta);
 
   constexpr double kSmall = 1e-6;
+
+  // WHY kNearPi. The general branch scales R - R^T (whose entries are
+  // 2*sin(theta)*n_i, each carrying absolute rounding ~eps) by theta/(2 sin
+  // theta), so the axis picks up an absolute error ~ (theta / (2 sin theta)) *
+  // eps ~ (pi / (2 * (pi - theta))) * eps as theta -> pi. Keeping that below the
+  // round-trip tolerance 1e-9 needs pi - theta > pi*eps / (2e-9) ~ 3.5e-7, so
+  // the general branch stays good until within ~3.5e-7 of pi. 1e-3 switches
+  // three-and-a-half orders earlier, so at the seam the general branch is still
+  // accurate to ~3.5e-13 and the symmetric branch to ~eps -- they agree far
+  // inside tolerance, which is what keeps the two-branch result continuous. The
+  // upper bound is loose: the symmetric method only needs 1 - cos(theta) not
+  // small, and that stays near 2 for any theta this close to pi.
+  constexpr double kPi = 3.14159265358979323846;
+  constexpr double kNearPi = 1e-3;
+
   Vec3 w;
   if (theta < kSmall) {
+    // Near identity: (R - R^T)/2 is skew(w) itself to O(theta^3). Reading
+    // (2,1), (0,2), (1,0) inverts skew()'s layout; the mirror positions would
+    // negate the axis and still pass any test that only checks ||w||.
     const Mat3 S = 0.5 * (R - R.transpose());
     w = Vec3(S(2, 1), S(0, 2), S(1, 0));
+  } else if (theta > kPi - kNearPi) {
+    // Near pi the axis comes from the SYMMETRIC part, because R - R^T has lost
+    // it. With Sym = (R + R^T)/2 = cos(theta) I + (1 - cos theta) n n^T, the
+    // outer product is
+    //
+    //   n n^T = (Sym - cos(theta) I) / (1 - cos theta),
+    //
+    // exact for a true rotation, and 1 - cos(theta) ~ 2 here so the division is
+    // well conditioned. Take the largest diagonal as the reference component --
+    // it satisfies n_k^2 >= 1/3, so dividing the rest of its row by n_k is safe.
+    const Mat3 sym = 0.5 * (R + R.transpose());
+    const double a = 1.0 - cosTheta;  // in (~1, 2] for theta in (pi/2, pi]
+    int k = 0;
+    if (sym(1, 1) > sym(k, k)) {
+      k = 1;
+    }
+    if (sym(2, 2) > sym(k, k)) {
+      k = 2;
+    }
+    Vec3 n;
+    n(k) = std::sqrt(std::max(0.0, (sym(k, k) - cosTheta) / a));
+    for (int j = 0; j < 3; ++j) {
+      if (j != k) {
+        n(j) = sym(k, j) / (a * n(k));
+      }
+    }
+    n.normalize();  // eps-level cleanup; the exact-coefficient rows above are
+                    // already unit to ~eps, so this only removes roundoff
+
+    // The symmetric part fixes the axis only up to sign. The antisymmetric part
+    // R - R^T == 2*sin(theta)*skew(n) still carries that sign as long as
+    // sin(theta) is above the noise floor -- it vanishes only exactly at pi,
+    // where +n and -n are the same rotation anyway. Align n with it so the
+    // result matches the general branch just below the seam and round-trips
+    // (exp(theta*n) != exp(-theta*n) for theta < pi).
+    const Vec3 axisSign(R(2, 1) - R(1, 2), R(0, 2) - R(2, 0), R(1, 0) - R(0, 1));
+    if (n.dot(axisSign) < 0.0) {
+      n = -n;
+    }
+    w = theta * n;
   } else {
+    // R - R^T == 2*sin(theta)*skew(n); scaling by theta/(2 sin theta) turns it
+    // into theta*n, read out in skew()'s layout.
     const Mat3 S = (theta / (2.0 * std::sin(theta))) * (R - R.transpose());
     w = Vec3(S(2, 1), S(0, 2), S(1, 0));
   }
-  // Reading (2,1), (0,2), (1,0) is the exact inverse of skew()'s layout: those
-  // are the entries holding +w1, +w2, +w3. The mirrored positions (1,2), (2,0),
-  // (0,1) would negate the whole axis and still pass any test that only checks
-  // ||w||.
 
   // Undo the V factor exp() applied to the translation: v == V^-1 * t, where
   //
