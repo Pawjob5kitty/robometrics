@@ -114,7 +114,8 @@ endif()
 # Library
 # ---------------------------------------------------------------------------
 add_library(robometrics src/se3.cpp src/urdf.cpp src/kinematics.cpp src/jacobian.cpp
-                        src/metrics.cpp src/rollout.cpp src/report.cpp src/cli.cpp)
+                        src/metrics.cpp src/rollout.cpp src/report.cpp
+                        src/report_json.cpp src/cli.cpp)
 add_library(robometrics::robometrics ALIAS robometrics)
 
 target_include_directories(

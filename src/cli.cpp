@@ -1,6 +1,7 @@
 #include "robometrics/cli.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -12,9 +13,11 @@
 
 #include <Eigen/SVD>
 
+#include "format.hpp"
 #include "robometrics/jacobian.hpp"
 #include "robometrics/metrics.hpp"
 #include "robometrics/report.hpp"
+#include "robometrics/report_json.hpp"
 #include "robometrics/rollout.hpp"
 #include "robometrics/urdf.hpp"
 
@@ -30,6 +33,8 @@ struct Options {
   std::string tipLink;  // empty means "let the URDF loader auto-detect"
   std::string out;      // empty means "write the CSV to the out stream"
   std::string profileOut;
+  std::string json;                              // empty means "do not write JSON"
+  ProfileMode profiles = ProfileMode::Embedded;  // whether the JSON embeds profiles
   double threshold = kDefaultDexterityThreshold;
   double charLength = 0.0;  // 0 means "compute it from the URDF"
   std::vector<std::string> inputs;
@@ -43,6 +48,10 @@ const char* kUsage =
     "  --tip LINK           end-effector link; needed when the URDF has more\n"
     "                       than one leaf, which is any robot with a gripper\n"
     "  --out FILE           write the report CSV here (default: stdout)\n"
+    "  --json FILE          also write the structured report as JSON here\n"
+    "  --profiles MODE      per-step profiles in the JSON: embedded (default) or\n"
+    "                       none; 'none' suits very large datasets, --profile-out\n"
+    "                       still writes them as CSV\n"
     "  --profile-out DIR    also write one per-step profile CSV per rollout\n"
     "  --threshold VALUE    low-dexterity threshold in m/rad (default 0.05)\n"
     "  --char-length M      characteristic length for normalising dexterity, in\n"
@@ -51,7 +60,8 @@ const char* kUsage =
     "\n"
     "The report CSV goes to stdout unless --out is given; the summary always\n"
     "goes to stderr, so a pipeline can consume the CSV while a person reads\n"
-    "the summary.\n";
+    "the summary. --json writes the same numbers as a structured document; its\n"
+    "format is documented in examples/FORMAT.md.\n";
 
 /// Parses one `--flag value` pair. A flag that takes a value must find one:
 /// running off the end of argv is an error, not a silently empty string --
@@ -96,6 +106,19 @@ bool parseOptions(const std::vector<std::string>& args, Options& opts, std::stri
       if (!takeValue(args, i, "--tip", opts.tipLink, error)) return false;
     } else if (a == "--out") {
       if (!takeValue(args, i, "--out", opts.out, error)) return false;
+    } else if (a == "--json") {
+      if (!takeValue(args, i, "--json", opts.json, error)) return false;
+    } else if (a == "--profiles") {
+      std::string mode;
+      if (!takeValue(args, i, "--profiles", mode, error)) return false;
+      if (mode == "embedded") {
+        opts.profiles = ProfileMode::Embedded;
+      } else if (mode == "none") {
+        opts.profiles = ProfileMode::None;
+      } else {
+        error = "--profiles must be 'embedded' or 'none', got '" + mode + "'";
+        return false;
+      }
     } else if (a == "--profile-out") {
       if (!takeValue(args, i, "--profile-out", opts.profileOut, error)) return false;
     } else if (a == "--threshold") {
@@ -151,22 +174,17 @@ bool parseOptions(const std::vector<std::string>& args, Options& opts, std::stri
 // Formatting
 // ---------------------------------------------------------------------------
 
-/// Six significant digits, so 0.184 stays "0.184" rather than "0.184000".
-std::string num(double v) {
-  std::ostringstream s;
-  s << std::setprecision(6) << v;
-  return s.str();
-}
+// Number formatting is shared with the JSON report so the two outputs cannot
+// drift apart; see src/format.hpp. These names are kept local so the many call
+// sites below stay readable.
+using detail::formatMetric;
+using detail::formatValue;
 
-/// Below this a dexterity value is numerical noise, not a measurement: just off
-/// a singularity sigma_min comes out around 1.3e-13 from cancellation, and
-/// printing it claims a precision it does not have. Eleven orders below the
-/// default threshold of 0.05, so nothing that matters is lost. Applied at
-/// OUTPUT only -- analyze() and the metrics keep the raw value.
-constexpr double kNoiseFloor = 1e-12;
+/// Six significant digits, so 0.184 stays "0.184" rather than "0.184000".
+std::string num(double v) { return formatValue(v); }
 
 /// Formats a metric value, flattening denormal-scale noise to a clean zero.
-std::string metricNum(double v) { return num(std::fabs(v) < kNoiseFloor ? 0.0 : v); }
+std::string metricNum(double v) { return formatMetric(v); }
 
 /// An absent optional becomes an EMPTY field, not 0. A rollout too short to
 /// have a path efficiency is not one with efficiency zero, and 0 would make it
@@ -280,6 +298,59 @@ bool writeProfile(const std::string& dir, const std::string& inputPath, const Ro
   return static_cast<bool>(file);
 }
 
+// ---------------------------------------------------------------------------
+// JSON assembly
+// ---------------------------------------------------------------------------
+
+/// Task label for a rollout: the file stem with a trailing `_demo_<N>` removed,
+/// so all demonstrations of one LIBERO task share a key a UI can group by. A
+/// stem without that suffix is its own task. Done by hand rather than with
+/// <regex> to keep the dependency and the compile time down.
+std::string deriveTask(const std::string& stem) {
+  std::size_t end = stem.size();
+  std::size_t digits = end;
+  while (digits > 0 && std::isdigit(static_cast<unsigned char>(stem[digits - 1]))) {
+    --digits;
+  }
+  static const std::string kMarker = "_demo_";
+  const bool hasDigits = digits < end;
+  if (hasDigits && digits >= kMarker.size() &&
+      stem.compare(digits - kMarker.size(), kMarker.size(), kMarker) == 0) {
+    return stem.substr(0, digits - kMarker.size());
+  }
+  return stem;
+}
+
+/// The `success` metadata as a tri-state. A recorder writes 1/0 (or true/false);
+/// anything else, or an absent key, is "unknown" -- null in the JSON, rather
+/// than a fabricated false.
+std::optional<bool> coerceSuccess(const std::map<std::string, std::string>& meta) {
+  const auto it = meta.find("success");
+  if (it == meta.end()) {
+    return std::nullopt;
+  }
+  if (it->second == "1" || it->second == "true" || it->second == "True") {
+    return true;
+  }
+  if (it->second == "0" || it->second == "false" || it->second == "False") {
+    return false;
+  }
+  return std::nullopt;
+}
+
+/// Median/p05/min of a metric, or all-null when there is nothing to summarise.
+/// Nearest-rank, matching printStat above, so the JSON summary and the stderr
+/// summary are the same numbers.
+void fillDexterityStats(JsonSummary& summary, std::vector<double> values) {
+  if (values.empty()) {
+    return;
+  }
+  std::sort(values.begin(), values.end());
+  summary.dexterityMedian = percentile(values, 0.5);
+  summary.dexterityP05 = percentile(values, 0.05);
+  summary.dexterityMin = values.front();
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -362,6 +433,7 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
   std::size_t efficiencyNA = 0;  // ok rollouts whose path_efficiency is N/A
   std::vector<double> margins;
   std::vector<double> efficiencies;
+  std::vector<JsonRollout> jsonRollouts;  // collected only when --json is given
 
   for (const std::string& path : opts.inputs) {
     Rollout rollout;
@@ -436,6 +508,22 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     if (!opts.profileOut.empty()) {
       writeProfile(opts.profileOut, path, rollout, report, err);
     }
+
+    if (!opts.json.empty()) {
+      JsonRollout entry;
+      entry.file = std::filesystem::path(path).stem().string();
+      entry.task = deriveTask(entry.file);
+      entry.steps = rollout.size();
+      entry.success = coerceSuccess(rollout.meta);
+      entry.status = robotEfficiency;
+      entry.report = report;
+      // In 'none' mode the profile is not embedded, so do not carry it: that is
+      // the whole point of the mode on a dataset too large to hold in memory.
+      if (opts.profiles == ProfileMode::None) {
+        entry.report.dexterityProfile.clear();
+      }
+      jsonRollouts.push_back(std::move(entry));
+    }
   }
 
   if (!opts.out.empty()) {
@@ -476,6 +564,47 @@ int runCli(const std::vector<std::string>& args, std::ostream& out, std::ostream
     const double percent = 100.0 * static_cast<double>(withSpans) / static_cast<double>(ok);
     err << withSpans << " rollout" << (withSpans == 1 ? "" : "s") << " ("
         << num(std::round(percent)) << "%) have at least one low-dexterity span\n";
+  }
+
+  // --- JSON report -------------------------------------------------------
+  // A second view of the same run, not a second computation: it reads the
+  // reports the loop already produced, so it can never disagree with the CSV.
+  if (!opts.json.empty()) {
+    std::ofstream jsonFile(opts.json);
+    if (!jsonFile) {
+      err << "robometrics: cannot open '" << opts.json << "' for writing\n";
+      return 2;
+    }
+
+    JsonReport report;
+    report.urdf = opts.urdf;
+    report.numDofs = robot->numDofs();
+    report.characteristicLength = charLength;
+    report.thresholdNormalized = normalizedThreshold;
+    if (!opts.tipLink.empty()) {
+      report.tip = opts.tipLink;
+    }
+    report.robotStatus = robotEfficiency;
+    report.profiles = opts.profiles;
+    report.rollouts = std::move(jsonRollouts);
+
+    report.summary.numRollouts = ok;
+    report.summary.numFailed = failed;
+    fillDexterityStats(report.summary, margins);
+    if (!efficiencies.empty()) {
+      std::vector<double> sorted = efficiencies;
+      std::sort(sorted.begin(), sorted.end());
+      report.summary.efficiencyMedian = percentile(sorted, 0.5);
+    }
+    report.summary.efficiencyAvailable = efficiencies.size();
+    report.summary.rolloutsWithSpan = withSpans;
+
+    writeJsonReport(jsonFile, report);
+    jsonFile.flush();
+    if (!jsonFile) {
+      err << "robometrics: writing '" << opts.json << "' failed\n";
+      return 2;
+    }
   }
 
   return ok > 0 ? 0 : 1;
