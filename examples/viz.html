@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>robometrics viewer</title>
+<style>
+  /* Light, quiet, functional. System fonts only -- no webfonts, renders the same
+     offline. Priority is a usable layout, not visual polish. */
+  :root {
+    --bg:     #ffffff;
+    --fg:     #10151b;
+    --muted:  #6b7280;
+    --faint:  #9aa2ac;
+    --line:   #edeff2;
+    --grid:   #eef1f4;
+    --hover:  #f6f8fa;
+    --sel:    #eaf1ff;
+    --accent: #2563eb;
+    --thresh: #b45309;
+    --worst:  #dc2626;
+    --span:   rgba(220, 38, 38, 0.07);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--sans);
+    font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ---- load state ---- */
+  #drop { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+  #drop.hidden { display: none; }
+  #dropbox { max-width: 520px; }
+  #dropbox h1 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+  #dropbox p { color: var(--muted); margin: 6px 0; }
+  body.dragover #dropbox h1 { color: var(--accent); }
+  .btn {
+    display: inline-block; background: #fff; border: 1px solid #d7dbe0; color: var(--fg);
+    font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.active { background: var(--fg); color: #fff; border-color: var(--fg); }
+  #err { color: var(--worst); margin-top: 12px; min-height: 1.2em; }
+
+  /* ---- app shell ---- */
+  #app { flex: 1; display: none; flex-direction: column; min-height: 0; }
+  #app.shown { display: flex; }
+
+  header {
+    border-bottom: 1px solid var(--line); padding: 12px 20px;
+    display: flex; align-items: baseline; gap: 28px; flex-wrap: wrap;
+  }
+  .stats { display: flex; gap: 30px; flex-wrap: wrap; align-items: baseline; }
+  .stat { display: flex; flex-direction: column; gap: 1px; }
+  .stat .v { font-size: 22px; font-weight: 650; letter-spacing: -.01em; }
+  .stat .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  header .meta { margin-left: auto; color: var(--faint); font-size: 11px; text-align: right; align-self: center; }
+  header .load { align-self: center; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+
+  /* ---- left: query + list ---- */
+  #left { width: 320px; min-width: 240px; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .controls { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  #search {
+    background: #fff; border: 1px solid #dfe3e8; color: var(--fg); font: inherit;
+    padding: 7px 9px; border-radius: 6px; width: 100%;
+  }
+  #search:focus { outline: none; border-color: var(--accent); }
+  .hint { color: var(--faint); font-size: 11px; }
+  #count { color: var(--faint); font-size: 11px; }
+
+  #list { overflow-y: auto; flex: 1; }
+  .item {
+    padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .item:hover { background: var(--hover); }
+  .item.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+  .item.sel .name { font-weight: 600; }
+  .item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+  .item .num { color: var(--muted); white-space: nowrap; }
+  .item.flagged .num { color: var(--worst); }
+  .empty-list { padding: 18px 12px; color: var(--muted); }
+
+  /* ---- right: action bar / graph / info ---- */
+  #right { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #actionbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0;
+  }
+  #actionbar .hint { margin-left: 4px; }
+  #detail { flex: 1; overflow: auto; padding: 16px 20px; }
+  #detail h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; word-break: break-all; }
+  #detail .sub { color: var(--faint); font-size: 11px; margin-bottom: 14px; word-break: break-all; }
+
+  .chart-wrap { position: relative; }
+  svg.chart { width: 100%; height: auto; display: block; cursor: grab; user-select: none; touch-action: none; }
+  svg.chart.grabbing { cursor: grabbing; }
+  .charthelp { color: var(--faint); font-size: 11px; margin-top: 4px; }
+  .empty { color: var(--muted); padding: 48px 12px; text-align: center; }
+
+  .grid { stroke: #f2f4f6; stroke-width: 0.5; }
+  .axis-label { fill: #b0b6bd; font-size: 10px; font-family: var(--sans); }
+  .profile-line { fill: none; stroke: #7d8794; stroke-width: 1; }
+  .threshold { stroke: var(--thresh); stroke-width: 1; stroke-dasharray: 5 4; stroke-opacity: .5; }
+  .worst { fill: var(--worst); stroke: #fff; stroke-width: 1.5; }
+  .span { fill: var(--span); }
+  .cross-line { stroke: #cbd0d6; stroke-width: 1; stroke-dasharray: 3 3; }
+  .cross-dot { fill: #4b5563; stroke: #fff; stroke-width: 1.5; }
+
+  #chartTip {
+    position: absolute; pointer-events: none; background: #10151b; color: #fff;
+    font-size: 11px; padding: 3px 7px; border-radius: 4px; white-space: nowrap;
+  }
+  #chartTip[hidden] { display: none; }
+
+  .legend { margin-top: 8px; color: var(--faint); font-size: 11px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 18px; vertical-align: middle; margin-right: 5px; }
+
+  /* ---- info panel (below the graph) ---- */
+  .infopanel { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
+  .fields { display: flex; gap: 34px; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 1px; }
+  .field .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .field .v { font-size: 20px; font-weight: 650; }
+  .field .v.na { color: var(--faint); font-weight: 500; }
+  .field .v.reason { color: var(--thresh); font-size: 15px; font-weight: 600; }
+  .spanlist { margin-top: 14px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- Load state -->
+<div id="drop">
+  <div id="dropbox">
+    <h1>robometrics viewer</h1>
+    <p>Drop a <code>report.json</code> here, or choose a file.</p>
+    <p style="color:var(--faint)">Reads the JSON format documented in FORMAT.md.
+      Runs entirely in the browser &mdash; no server, nothing leaves this page.</p>
+    <p style="margin-top:16px"><label class="btn">choose file<input id="file" type="file" accept="application/json,.json" hidden></label></p>
+    <div id="err"></div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <header>
+    <div class="stats" id="summary"></div>
+    <div class="meta" id="robotmeta"></div>
+    <label class="btn load">load&hellip;<input id="file2" type="file" accept="application/json,.json" hidden></label>
+  </header>
+  <main>
+    <div id="left">
+      <div class="controls">
+        <input id="search" type="search" placeholder="dexterity: worst   ·   efficiency: best   ·   free text">
+        <div class="hint">field: worst|best sorts &mdash; dexterity, efficiency. Any other text filters file/task.</div>
+        <div id="count"></div>
+      </div>
+      <div id="list"></div>
+    </div>
+    <div id="right">
+      <div id="actionbar">
+        <button id="compareBtn" class="btn" type="button">compare</button>
+        <span class="hint" id="compareHint"></span>
+      </div>
+      <div id="detail"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+const TOP_N = 50;
+
+const state = {
+  report: null,
+  query: "dexterity: worst",
+  selected: null,      // original index into report.rollouts, or null
+  visible: [],
+  sortKey: "dexterity_min",
+  chart: null,         // { prof, thr, n, maxV, worstAt, worstVal, spans, view, geom }
+  drag: null,          // { active, startX, startView }
+};
+
+// ---- pure helpers (no DOM) -------------------------------------------------
+
+function fmt(x, p) {
+  if (x === null || x === undefined) return "—";
+  if (typeof x !== "number") return String(x);
+  if (!isFinite(x)) return "—";
+  return String(Number(x.toPrecision(p || 4)));
+}
+function fmtBool(b) { return b === true ? "yes" : b === false ? "no" : "—"; }
+
+// Parse the search box into a sort directive plus free text. `field: worst|best`
+// sets the sort; anything left over filters file/task. Free text alone keeps the
+// default worst-dexterity order.
+function parseQuery(q) {
+  q = q || "";
+  let sortKey = "dexterity_min", dir = "worst", text = q;
+  const m = q.match(/\b(dexterity|dex|efficiency|eff|performance|perf)\s*:\s*(worst|best)\b/i);
+  if (m) {
+    sortKey = m[1].toLowerCase().indexOf("eff") === 0 ? "efficiency" : "dexterity_min";
+    dir = m[2].toLowerCase();
+    text = (q.slice(0, m.index) + " " + q.slice(m.index + m[0].length)).trim();
+  }
+  return { sortKey, dir, text };
+}
+
+// worst = ascending (smallest first), best = descending; null always last.
+function makeCompare(sortKey, dir) {
+  return (a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    const an = (av === null || av === undefined), bn = (bv === null || bv === undefined);
+    if (an && bn) return String(a.file).localeCompare(String(b.file));
+    if (an) return 1;
+    if (bn) return -1;
+    return dir === "best" ? bv - av : av - bv;
+  };
+}
+
+function visibleRollouts(report, query) {
+  const { sortKey, dir, text } = parseQuery(query);
+  const q = text.trim().toLowerCase();
+  let list = report.rollouts.map((r, i) => Object.assign({ __i: i }, r));
+  if (q) list = list.filter(r =>
+    String(r.file).toLowerCase().includes(q) || String(r.task).toLowerCase().includes(q));
+  list.sort(makeCompare(sortKey, dir));
+  return { shown: list.slice(0, TOP_N), total: list.length, sortKey, dir };
+}
+
+// ---- DOM -------------------------------------------------------------------
+
+const $ = id => document.getElementById(id);
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+function renderSummary() {
+  const s = state.report.summary || {};
+  const cells = [
+    ["rollouts", fmt(s.num_rollouts, 6)],
+    ["dexterity median", fmt(s.dexterity_median)],
+    ["dexterity p05", fmt(s.dexterity_p05)],
+    ["dexterity min", fmt(s.dexterity_min)],
+    ["efficiency median", fmt(s.efficiency_median)],
+    ["rollouts w/ span", fmt(s.rollouts_with_span, 6)],
+  ];
+  $("summary").innerHTML = cells.map(c =>
+    '<div class="stat"><span class="v num">' + c[1] + '</span><span class="k">' + c[0] + "</span></div>").join("");
+
+  const r = state.report.robot || {}, pr = state.report.params || {};
+  const bits = [];
+  if (r.urdf) bits.push(esc(r.urdf));
+  if (r.num_dofs != null) bits.push(r.num_dofs + " dof");
+  if (r.characteristic_length != null) bits.push("L=" + fmt(r.characteristic_length) + " m");
+  if (pr.threshold_normalized != null) bits.push("thr=" + fmt(pr.threshold_normalized));
+  if (pr.tip) bits.push("tip=" + esc(pr.tip));
+  $("robotmeta").innerHTML = bits.join(" &middot; ");
+}
+
+function buildList() {
+  const listEl = $("list");
+  const { shown, total, sortKey, dir } = visibleRollouts(state.report, state.query);
+  state.visible = shown;
+  state.sortKey = sortKey;
+
+  if (total === 0) {
+    listEl.innerHTML = '<div class="empty-list">' +
+      (state.report.rollouts.length === 0 ? "no rollouts in this report" : "nothing matches the search") + "</div>";
+    $("count").textContent = "";
+    return;
+  }
+  $("count").textContent = "showing " + shown.length + " of " + total +
+    " · " + (sortKey === "efficiency" ? "efficiency" : "dexterity") + " " + dir + " first";
+
+  listEl.innerHTML = shown.map(r => {
+    const flagged = r.spans && r.spans.length > 0;
+    const right = sortKey === "efficiency"
+      ? (r.efficiency_status === "available" ? fmt(r.efficiency) : "n/a")
+      : fmt(r.dexterity_min);
+    return '<div class="item' + (r.__i === state.selected ? " sel" : "") + (flagged ? " flagged" : "") +
+      '" data-i="' + r.__i + '"><span class="name" title="' + esc(r.file) + '">' + esc(r.file) +
+      '</span><span class="num">' + right + "</span></div>";
+  }).join("");
+}
+
+function markSelection() {
+  const cur = $("list").querySelector(".item.sel");
+  if (cur) cur.classList.remove("sel");
+  if (state.selected !== null) {
+    const next = $("list").querySelector('.item[data-i="' + state.selected + '"]');
+    if (next) next.classList.add("sel");
+  }
+}
+
+// ---- detail + zoomable chart ----------------------------------------------
+
+function renderDetail() {
+  const el = $("detail");
+  state.chart = null;
+  if (state.selected === null) {
+    el.innerHTML = '<div class="empty">' +
+      (state.report.rollouts.length === 0 ? "no rollouts in this report" : "select a rollout on the left") + "</div>";
+    return;
+  }
+  const r = state.report.rollouts[state.selected];
+  const thr = (state.report.params || {}).threshold_normalized;
+
+  let effHtml;
+  if (r.efficiency_status !== "available") effHtml = '<span class="v reason">N/A &middot; ' + esc(r.efficiency_status) + "</span>";
+  else if (r.efficiency == null) effHtml = '<span class="v na">—</span>';
+  else effHtml = '<span class="v num">' + fmt(r.efficiency) + "</span>";
+
+  const spanNote = (r.spans && r.spans.length)
+    ? '<div class="spanlist">low-dexterity spans: ' +
+        r.spans.map(s => "[" + s.begin + ".." + (s.end - 1) + "] worst " + fmt(s.worst)).join(", ") + "</div>"
+    : "";
+
+  const hasProfile = r.profile && r.profile.length;
+  const chartHtml = hasProfile
+    ? '<div class="chart-wrap"><svg id="chart" class="chart num" viewBox="0 0 820 300" preserveAspectRatio="xMidYMid meet"></svg><div id="chartTip" hidden></div></div>' +
+      '<div class="charthelp">scroll to zoom · drag to pan · double-click to reset</div>'
+    : (r.profile === null
+        ? '<div class="empty">profiles not embedded in this file &mdash; re-run without <code>--profiles none</code> to see the curve</div>'
+        : '<div class="empty">no steps recorded in this rollout</div>');
+
+  el.innerHTML =
+    "<h2>" + esc(r.file) + "</h2>" +
+    '<div class="sub">task: ' + esc(r.task) + "</div>" +
+    chartHtml +
+    (hasProfile ? '<div class="legend">' +
+      '<span><span class="sw" style="border-top:1px dashed var(--thresh);opacity:.6"></span>threshold</span>' +
+      '<span><span class="sw" style="border-top:5px solid var(--worst);width:5px"></span>worst step</span>' +
+      (r.spans && r.spans.length ? '<span><span class="sw" style="border-top:8px solid var(--span);width:14px"></span>low-dexterity span</span>' : "") +
+      "</div>" : "") +
+    '<div class="infopanel"><div class="fields">' +
+      '<div class="field"><span class="k">dexterity min</span><span class="v num' + (r.dexterity_min == null ? " na" : "") + '">' + fmt(r.dexterity_min) + "</span></div>" +
+      '<div class="field"><span class="k">efficiency</span>' + effHtml + "</div>" +
+      '<div class="field"><span class="k">steps</span><span class="v num">' + fmt(r.steps, 6) + "</span></div>" +
+      '<div class="field"><span class="k">success</span><span class="v' + (r.success == null ? " na" : "") + '">' + fmtBool(r.success) + "</span></div>" +
+      '<div class="field"><span class="k">spans</span><span class="v num">' + (r.spans ? r.spans.length : 0) + "</span></div>" +
+    "</div>" + spanNote + "</div>";
+
+  if (hasProfile) {
+    let maxV = Math.max.apply(null, r.profile);
+    if (typeof thr === "number" && isFinite(thr)) maxV = Math.max(maxV, thr);
+    if (!(maxV > 0)) maxV = 1;
+    maxV *= 1.08;
+    state.chart = {
+      prof: r.profile, thr, n: r.profile.length, maxV,
+      worstAt: r.dexterity_worst_at, worstVal: r.dexterity_min, spans: r.spans || [],
+      view: { i0: 0, i1: Math.max(1, r.profile.length - 1) },
+    };
+    wireChart();
+    drawChart();
+  }
+}
+
+// Rebuild the SVG for the current view. Called on select, zoom, and pan; only
+// the inner markup changes, so the <svg> element and its handlers persist.
+function drawChart() {
+  const c = state.chart; if (!c) return;
+  const svg = $("chart"); if (!svg) return;
+  const W = 820, H = 300, padL = 48, padR = 16, padT = 14, padB = 26;
+  const { i0, i1 } = c.view, maxV = c.maxV, prof = c.prof;
+  const X = i => padL + ((i - i0) / ((i1 - i0) || 1)) * (W - padL - padR);
+  const Y = v => padT + (1 - v / maxV) * (H - padT - padB);
+  c.geom = { W, H, padL, padR, padT, padB, X, Y };
+
+  const p = [];
+  p.push('<defs><clipPath id="plotclip"><rect x="' + padL + '" y="' + padT + '" width="' + (W - padL - padR) + '" height="' + (H - padT - padB) + '"/></clipPath></defs>');
+
+  // inner grid + labels
+  const NVX = 6;
+  for (let k = 0; k <= NVX; k++) {
+    const x = padL + (k / NVX) * (W - padL - padR);
+    const idx = Math.round(i0 + (k / NVX) * (i1 - i0));
+    p.push('<line class="grid" x1="' + x.toFixed(1) + '" y1="' + padT + '" x2="' + x.toFixed(1) + '" y2="' + (H - padB) + '"/>');
+    p.push('<text class="axis-label" x="' + x.toFixed(1) + '" y="' + (H - 8) + '" text-anchor="middle">' + idx + "</text>");
+  }
+  const NHZ = 4;
+  for (let k = 0; k <= NHZ; k++) {
+    const y = padT + (k / NHZ) * (H - padT - padB);
+    p.push('<line class="grid" x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(1) + '"/>');
+    p.push('<text class="axis-label" x="' + (padL - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end">' + fmt(maxV * (1 - k / NHZ), 2) + "</text>");
+  }
+
+  const clipped = [];
+  c.spans.forEach(s => {
+    const x1 = X(s.begin), x2 = X(Math.max(s.begin, s.end - 1)), w = Math.max(2, x2 - x1);
+    clipped.push('<rect class="span" x="' + x1.toFixed(1) + '" y="' + padT + '" width="' + w.toFixed(1) + '" height="' + (H - padT - padB) + '"/>');
+  });
+  if (typeof c.thr === "number" && isFinite(c.thr) && c.thr >= 0) {
+    const ty = Y(c.thr);
+    clipped.push('<line class="threshold" x1="' + padL + '" y1="' + ty.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + ty.toFixed(1) + '"/>');
+  }
+  clipped.push('<polyline class="profile-line" points="' + prof.map((v, i) => X(i).toFixed(1) + "," + Y(v).toFixed(1)).join(" ") + '"/>');
+  if (c.worstAt != null && c.worstVal != null && c.worstAt >= i0 && c.worstAt <= i1) {
+    clipped.push('<circle class="worst" cx="' + X(c.worstAt).toFixed(1) + '" cy="' + Y(c.worstVal).toFixed(1) + '" r="3.5"/>');
+  }
+  p.push('<g clip-path="url(#plotclip)">' + clipped.join("") + "</g>");
+
+  p.push('<line id="crossLine" class="cross-line" x1="0" y1="0" x2="0" y2="0" style="display:none"/>');
+  p.push('<circle id="crossDot" class="cross-dot" cx="0" cy="0" r="3.5" style="display:none"/>');
+
+  svg.innerHTML = p.join("");
+}
+
+function clampView(i0, i1, n) {
+  const maxIdx = n - 1;
+  let w = i1 - i0;
+  if (w < 2) w = 2;
+  if (w > maxIdx) w = maxIdx;
+  if (i0 < 0) { i0 = 0; i1 = i0 + w; }
+  if (i1 > maxIdx) { i1 = maxIdx; i0 = i1 - w; }
+  if (i0 < 0) i0 = 0;
+  return { i0, i1 };
+}
+
+// Attach zoom/hover to the freshly created <svg>. (Pan uses window-level
+// listeners wired once in init, so nothing accumulates per selection.)
+function wireChart() {
+  const svg = $("chart"); if (!svg) return;
+
+  svg.addEventListener("wheel", e => {
+    if (!state.chart) return;
+    e.preventDefault();
+    const g = state.chart.geom, v = state.chart.view;
+    const rect = svg.getBoundingClientRect();
+    const sx = (e.clientX - rect.left) / (rect.width / g.W || 1);
+    const frac = Math.max(0, Math.min(1, (sx - g.padL) / (g.W - g.padL - g.padR)));
+    const cursor = v.i0 + frac * (v.i1 - v.i0);
+    const factor = e.deltaY < 0 ? 0.85 : 1 / 0.85;
+    let w = (v.i1 - v.i0) * factor;
+    state.chart.view = clampView(cursor - frac * w, cursor - frac * w + w, state.chart.n);
+    drawChart();
+  }, { passive: false });
+
+  svg.addEventListener("mousedown", e => {
+    if (!state.chart) return;
+    state.drag = { active: true, startX: e.clientX, startView: Object.assign({}, state.chart.view) };
+    svg.classList.add("grabbing");
+    e.preventDefault();
+  });
+
+  svg.addEventListener("dblclick", () => {
+    if (!state.chart) return;
+    state.chart.view = { i0: 0, i1: Math.max(1, state.chart.n - 1) };
+    drawChart();
+  });
+
+  // hover crosshair + tooltip (skipped while panning)
+  let pending = null;
+  function hover() {
+    pending = null;
+    const e = hover._e; if (!e || !state.chart) return;
+    const g = state.chart.geom, v = state.chart.view, prof = state.chart.prof;
+    const rect = svg.getBoundingClientRect();
+    const scale = rect.width / g.W || 1;
+    const sx = (e.clientX - rect.left) / scale;
+    const frac = Math.max(0, Math.min(1, (sx - g.padL) / (g.W - g.padL - g.padR)));
+    let i = Math.round(v.i0 + frac * (v.i1 - v.i0));
+    i = Math.max(0, Math.min(state.chart.n - 1, i));
+    const val = prof[i], px = g.X(i), py = g.Y(val);
+    const line = $("crossLine"), dot = $("crossDot"), tip = $("chartTip");
+    if (!line || !tip) return;
+    line.setAttribute("x1", px); line.setAttribute("x2", px);
+    line.setAttribute("y1", g.padT); line.setAttribute("y2", g.H - g.padB); line.style.display = "";
+    dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.style.display = "";
+    tip.hidden = false; tip.textContent = "step " + i + "  ·  " + fmt(val);
+    tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth - 4, px * scale + 10)) + "px";
+    tip.style.top = Math.max(0, py * scale - 26) + "px";
+  }
+  svg.addEventListener("mousemove", e => {
+    if (state.drag && state.drag.active) return;
+    hover._e = e; if (!pending) pending = requestAnimationFrame(hover);
+  });
+  svg.addEventListener("mouseleave", () => {
+    if (pending) { cancelAnimationFrame(pending); pending = null; }
+    const line = $("crossLine"), dot = $("crossDot"), tip = $("chartTip");
+    if (line) line.style.display = "none";
+    if (dot) dot.style.display = "none";
+    if (tip) tip.hidden = true;
+  });
+}
+
+function setSelected(i) {
+  state.selected = i;
+  markSelection();
+  renderDetail();
+}
+
+let listScheduled = false;
+function scheduleList() {
+  if (listScheduled) return;
+  listScheduled = true;
+  requestAnimationFrame(() => { listScheduled = false; buildList(); markSelection(); });
+}
+
+// ---- loading ---------------------------------------------------------------
+
+function showError(msg) { $("err").textContent = msg; }
+
+function loadText(text) {
+  let data;
+  try { data = JSON.parse(text); }
+  catch (e) { showError("Not valid JSON: " + e.message); return; }
+  if (!data || typeof data !== "object" || !Array.isArray(data.rollouts)) {
+    showError('Not a robometrics report: no "rollouts" array. See FORMAT.md.'); return;
+  }
+  state.report = data; state.selected = null;
+  showError("");
+  $("drop").classList.add("hidden"); $("app").classList.add("shown");
+
+  renderSummary();
+  buildList();
+  renderDetail();
+  if (state.visible.length) setSelected(state.visible[0].__i);
+}
+
+function loadFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => loadText(String(reader.result));
+  reader.onerror = () => showError("Could not read the file.");
+  reader.readAsText(file);
+}
+
+// ---- wiring ----------------------------------------------------------------
+
+function init() {
+  $("search").value = state.query;
+  $("file").addEventListener("change", e => loadFile(e.target.files[0]));
+  $("file2").addEventListener("change", e => loadFile(e.target.files[0]));
+  $("search").addEventListener("input", e => { state.query = e.target.value; scheduleList(); });
+
+  $("list").addEventListener("click", e => {
+    const item = e.target.closest(".item");
+    if (item) setSelected(Number(item.dataset.i));
+  });
+
+  // Placeholder: overlaying several rollouts arrives with the aggregation step.
+  $("compareBtn").addEventListener("click", () => {
+    const b = $("compareBtn"); b.classList.toggle("active");
+    $("compareHint").textContent = b.classList.contains("active")
+      ? "multi-rollout overlay comes with the aggregation step — not wired yet" : "";
+  });
+
+  document.addEventListener("keydown", e => {
+    if (!state.report || (e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
+    const ae = document.activeElement;
+    if (ae && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(ae.tagName)) return;
+    if (!state.visible.length) return;
+    let pos = state.visible.findIndex(r => r.__i === state.selected);
+    pos = e.key === "ArrowDown" ? Math.min(state.visible.length - 1, pos + 1) : Math.max(0, pos - 1);
+    e.preventDefault();
+    setSelected(state.visible[pos].__i);
+    const sel = $("list").querySelector(".item.sel");
+    if (sel) sel.scrollIntoView({ block: "nearest" });
+  });
+
+  // Chart pan: window-level so a drag that leaves the SVG keeps working.
+  window.addEventListener("mousemove", e => {
+    if (!state.drag || !state.drag.active || !state.chart) return;
+    const g = state.chart.geom, sv = state.drag.startView;
+    const svg = $("chart"); if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const scale = rect.width / g.W || 1;
+    const dPx = (e.clientX - state.drag.startX) / scale;
+    const perIdx = (g.W - g.padL - g.padR) / ((sv.i1 - sv.i0) || 1);
+    const dIdx = dPx / perIdx;
+    state.chart.view = clampView(sv.i0 - dIdx, sv.i1 - dIdx, state.chart.n);
+    drawChart();
+  });
+  window.addEventListener("mouseup", () => {
+    if (state.drag) state.drag.active = false;
+    const svg = $("chart"); if (svg) svg.classList.remove("grabbing");
+  });
+
+  ["dragover", "dragenter"].forEach(ev =>
+    document.addEventListener(ev, e => { e.preventDefault(); document.body.classList.add("dragover"); }));
+  document.addEventListener("dragleave", e => { if (e.target === document.body) document.body.classList.remove("dragover"); });
+  document.addEventListener("drop", e => {
+    e.preventDefault(); document.body.classList.remove("dragover");
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+}
+
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+}
+
+// Exposed for offline logic tests; harmless in the browser.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { fmt, fmtBool, parseQuery, makeCompare, visibleRollouts };
+}
+</script>
+</body>
+</html>
