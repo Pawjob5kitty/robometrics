@@ -102,6 +102,41 @@ and the metrics say so consistently across all 500. A dataset with scripted or
 learned policies, or with tasks that drive the arm near its limits, is where
 the spread and the spans would appear.
 
+### First empirical finding: policy rollouts with a success/failure mix
+
+Unlike the spatial demonstrations above — clean, all-success, zero variance —
+this is a different dataset: rollouts of the learned policy
+`lerobot/pi05_libero_finetuned_v044` (LeRobot) evaluated on LIBERO-10, through a
+wrapper that records the **measured** joint positions and the **real** success
+from the environment (not estimated as with the demonstrations). This is the
+first dataset here with actual failures, so the metric has variance to work
+with.
+
+Two independent runs:
+
+```
+Round A (15 episodes, task_ids 0-4):  succeeded n=11, median 0.1552 | failed n=4, median 0.1168 | diff +0.0385
+Round B (15 episodes, task_ids 5-9):  100% success, 0 failures (these tasks were easy for the policy)
+Combined (30 episodes, both rounds):  succeeded n=26, median 0.1542 | failed n=4, median 0.1168 | diff +0.0375
+```
+
+The finding, in one sentence: rollouts that failed had a lower median
+`dexterity_norm` than those that succeeded — consistently across both runs. Low
+dexterity means the robot was close to a singularity, with no room to manoeuvre,
+which makes physical sense as a risk factor for failure.
+
+The limit, explicitly: n=4 failures is a small sample. This is an indicative
+finding, not a statistically supported claim. The succeeded-group median is
+stable (n=26, differing between rounds only in the third decimal); the
+failed-group median is not.
+
+What it does **not** say:
+
+- it does not give a probability of failure or a threshold
+- it is a correlation on one policy and one task set, not a general law
+- it is uncalibrated — you cannot read "this rollout has an X% chance of
+  failure" out of it
+
 ## What it does NOT do
 
 Every metric is **kinematic** — computed from `q` and the URDF, nothing else.

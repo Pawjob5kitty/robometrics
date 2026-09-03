@@ -102,6 +102,39 @@ konzistentně říkají. Dataset se skriptovanými nebo naučenými politikami, 
 s úlohami, které ženou rameno k jeho mezím, je místo, kde by se rozptyl a spany
 objevily.
 
+### První empirický nález: rollouty politiky s mixem úspěch/selhání
+
+Na rozdíl od spatial demonstrací výše — čisté, samý úspěch, nulový rozptyl —
+tohle je jiný dataset: rollouty naučené politiky
+`lerobot/pi05_libero_finetuned_v044` (LeRobot) evaluované na LIBERO-10, přes
+wrapper, který ukládá **měřené** joint positions a **reálný** success z prostředí
+(ne odhadovaný jako u demonstrací). Je to první zdejší dataset se skutečnými
+selháními, takže metrika má konečně rozptyl, s nímž může pracovat.
+
+Dva nezávislé běhy:
+
+```
+Kolo A (15 epizod, task_ids 0-4):   succeeded n=11, medián 0.1552 | failed n=4, medián 0.1168 | rozdíl +0.0385
+Kolo B (15 epizod, task_ids 5-9):   100% success, 0 selhání (tyto úlohy byly pro politiku snadné)
+Souhrn (30 epizod, obě kola):       succeeded n=26, medián 0.1542 | failed n=4, medián 0.1168 | rozdíl +0.0375
+```
+
+Nález jednou větou: rollouty, které selhaly, měly nižší medián `dexterity_norm`
+než ty, co uspěly — konzistentně přes oba běhy. Nízká obratnost znamená, že robot
+byl blízko singularity, tedy bez prostoru na manévrování — což dává fyzikální
+smysl jako rizikový faktor selhání.
+
+Limit, explicitně: n=4 na selhání je malý vzorek. Tohle je orientační nález, ne
+statisticky podložené tvrzení. Medián succeeded skupiny je stabilní (n=26, mezi
+koly se liší jen ve třetím desetinném místě); medián failed skupiny na tom
+stabilní není.
+
+Co to **neříká**:
+
+- neurčuje pravděpodobnost selhání ani práh
+- je to korelace na jedné politice a jedné sadě úloh, ne obecný zákon
+- nekalibrováno — nejde z toho číst „tenhle rollout má X % šanci na selhání"
+
 ## Co NEDĚLÁ
 
 Všechny metriky jsou **kinematické** — počítají se z `q` a z URDF, nic víc.
